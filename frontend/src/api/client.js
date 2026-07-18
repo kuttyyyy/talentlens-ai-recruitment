@@ -3,7 +3,7 @@
 // Keeping this in one place means if the backend URL ever changes,
 // we only update it here instead of in every single page.
 
-const BASE_URL = "http://127.0.0.1:8000";
+const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 export async function apiRequest(endpoint, method = "GET", body = null, token = null) {
   const headers = { "Content-Type": "application/json" };
