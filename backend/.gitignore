@@ -1,0 +1,19 @@
+# Secret keys — never commit this file
+.env
+backend/.env
+
+# Python
+backend/venv/
+__pycache__/
+*.pyc
+backend/recruitment.db
+
+# Uploaded resume files
+backend/uploaded_resumes/
+
+# Node.js
+frontend/node_modules/
+frontend/dist/
+
+# Editor settings
+.vscode/

@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+/* Our design tokens. Tailwind v4 automatically turns these into
+   usable classes: --color-gold becomes bg-gold, text-gold, border-gold, etc.
+   --font-display becomes the "font-display" class, and so on. */
+@theme {
+  --color-ink: #0b0e14;       /* page background */
+  --color-surface: #151a24;   /* panel background */
+  --color-surface-2: #1c2230; /* input/card background, one shade lighter */
+  --color-border: #2a3142;
+  --color-text: #f5f7fa;
+  --color-muted: #8b93a7;
+
+  --color-gold: #f0a857;      /* primary accent — buttons, highlights */
+  --color-gold-dim: #b97f3d;  /* hover state for gold */
+  --color-signal: #5b8def;    /* secondary accent — used sparingly */
+  --color-success: #34d399;
+  --color-danger: #f87171;
+
+  --font-display: "Fraunces", serif;
+  --font-body: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+body {
+  background-color: var(--color-ink);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
