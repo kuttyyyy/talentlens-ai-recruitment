@@ -26,4 +26,4 @@ cd backend, venv\Scripts\activate, uvicorn app.main:app --reload
 cd frontend, npm run dev
 
 ## Author
-Built by [S.M.PRAJWEL VINAYAK] — a full-stack agentic AI recruitment platform demonstrating resume analysis, candidate-job matching with visible reasoning, and human-in-the-loop email automation.
+Built by S.M.PRAJWEL VINAYAK — a full-stack agentic AI recruitment platform demonstrating resume analysis, candidate-job matching with visible reasoning, and human-in-the-loop email automation.
