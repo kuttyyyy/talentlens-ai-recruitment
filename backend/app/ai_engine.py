@@ -69,10 +69,17 @@ Evaluate how well this candidate matches this specific job. Consider skill
 overlap, relevant experience, and education. Be honest and fair — not every
 candidate is a good fit, and the score should reflect that.
 
+Also decide a recommendation: "auto_reject" if this candidate clearly does
+not meet the core requirements, "auto_shortlist" if they clearly meet or
+exceed them, or "needs_review" if it's genuinely borderline and a human
+should look closer. Be conservative — only recommend auto_reject or
+auto_shortlist when you're confident; default to needs_review otherwise.
+
 Return ONLY valid JSON in exactly this shape, no extra commentary:
 {{
   "match_score": <integer 0-100>,
-  "reasoning": "2-4 sentences explaining the score in plain language: which required skills they have, which they're missing, and how their experience/education fits or doesn't. Written the way a recruiter would explain their reasoning to a hiring manager."
+  "reasoning": "2-4 sentences explaining the score in plain language: which required skills they have, which they're missing, and how their experience/education fits or doesn't. Written the way a recruiter would explain their reasoning to a hiring manager.",
+  "recommendation": "auto_reject" | "needs_review" | "auto_shortlist"
 }}
 """
     try:
@@ -94,7 +101,7 @@ def fallback_match_score(candidate_skills: str, required_skills: str):
     required_set = set(s.strip().lower() for s in required_skills.split(",") if s.strip())
 
     if not required_set:
-        return 0, "No required skills were listed for this job, so a score could not be calculated."
+        return 0, "No required skills were listed for this job, so a score could not be calculated.", "needs_review"
 
     matched = candidate_set & required_set
     missing = required_set - candidate_set
@@ -107,7 +114,14 @@ def fallback_match_score(candidate_skills: str, required_skills: str):
         reasoning += f". Missing: {', '.join(missing)}"
     reasoning += ". (Basic keyword-based score — AI analysis was unavailable.)"
 
-    return score, reasoning
+    if score < 30:
+        recommendation = "auto_reject"
+    elif score >= 75:
+        recommendation = "auto_shortlist"
+    else:
+        recommendation = "needs_review"
+
+    return score, reasoning, recommendation
 
 
 def generate_interview_questions(resume_text: str, job_title: str, job_description: str, ai_reasoning: str):
@@ -185,4 +199,92 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
         return json.loads(response.choices[0].message.content)
     except Exception as e:
         print(f"[AI ENGINE] Email drafting failed: {e}", flush=True)
+        return {"error": str(e)}
+
+
+def draft_status_email(candidate_name: str, job_title: str, company_name: str, recruiter_name: str, email_type: str):
+    """Drafts a rejection or shortlist-notice email. email_type must be
+    'rejected' or 'shortlisted' (matches the application's status)."""
+    if not client:
+        return {"error": "No Groq API key configured"}
+
+    if email_type == "rejected":
+        instruction = (
+            f"Write a warm, respectful rejection email to {candidate_name} for the "
+            f"{job_title} position at {company_name}. Be kind and encouraging, keep it "
+            f"concise (100-140 words), thank them for their time, and do not give a "
+            f"specific reason for the rejection. Sign off as {recruiter_name}."
+        )
+    elif email_type == "shortlisted":
+        instruction = (
+            f"Write a warm, encouraging email to {candidate_name} letting them know "
+            f"they've been shortlisted for the {job_title} position at {company_name}, "
+            f"and that the team will follow up soon with next steps. Keep it concise "
+            f"(100-140 words) and positive. Sign off as {recruiter_name}."
+        )
+    else:
+        return {"error": f"Unknown email_type: {email_type}"}
+
+    prompt = f"""{instruction}
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "subject": "email subject line",
+  "body": "the full email body text, with \\n for line breaks"
+}}
+"""
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.5,
+            max_tokens=2000,
+        )
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        print(f"[AI ENGINE] Status email drafting failed: {e}", flush=True)
+        return {"error": str(e)}
+
+
+def answer_copilot_question(question: str, context_data: str):
+    """Answers a recruiter's free-form question using their real hiring
+    data as context. context_data is a plain-text summary of their jobs
+    and applicants, built by the copilot route before calling this."""
+    if not client:
+        return {"error": "No Groq API key configured"}
+
+    prompt = f"""You are a recruiter's AI assistant with access to their real
+hiring data below. Answer their question using ONLY this data — do not
+invent candidates, jobs, or numbers that aren't present. If the data doesn't
+contain enough information to answer, say so plainly.
+
+RECRUITER'S DATA:
+\"\"\"
+{context_data[:6000]}
+\"\"\"
+
+RECRUITER'S QUESTION: {question}
+
+Answer in plain, direct language, the way a helpful colleague would —
+2-5 sentences, referencing specific candidates/jobs/numbers from the data
+when relevant.
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "answer": "your answer here"
+}}
+"""
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.3,
+            max_tokens=1000,
+        )
+        result = json.loads(response.choices[0].message.content)
+        return result.get("answer", "")
+    except Exception as e:
+        print(f"[AI ENGINE] Copilot answer failed: {e}", flush=True)
         return {"error": str(e)}

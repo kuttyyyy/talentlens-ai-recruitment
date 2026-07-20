@@ -15,7 +15,7 @@ router = APIRouter(prefix="/applications", tags=["Applications"])
 @router.post("/apply")
 def apply_to_job(job_id: int, candidate_id: int, db: Session = Depends(get_db)):
     """A candidate applies to a job. Runs the AI matching engine immediately
-    and stores the score + reasoning alongside the application."""
+    and stores the score + reasoning + recommendation alongside the application."""
 
     job = db.query(models.Job).filter(models.Job.id == job_id).first()
     if not job:
@@ -48,8 +48,9 @@ def apply_to_job(job_id: int, candidate_id: int, db: Session = Depends(get_db)):
     if ai_result:
         match_score = ai_result.get("match_score", 0)
         reasoning = ai_result.get("reasoning", "")
+        recommendation = ai_result.get("recommendation", "needs_review")
     else:
-        match_score, reasoning = fallback_match_score(
+        match_score, reasoning, recommendation = fallback_match_score(
             profile.extracted_skills or "", job.required_skills
         )
 
@@ -58,6 +59,7 @@ def apply_to_job(job_id: int, candidate_id: int, db: Session = Depends(get_db)):
         candidate_id=candidate_id,
         match_score=match_score,
         ai_reasoning=reasoning,
+        ai_recommendation=recommendation,
         status="applied",
     )
     db.add(new_application)
@@ -68,6 +70,7 @@ def apply_to_job(job_id: int, candidate_id: int, db: Session = Depends(get_db)):
         "message": "Application submitted successfully",
         "match_score": match_score,
         "ai_reasoning": reasoning,
+        "ai_recommendation": recommendation,
     }
 
 
@@ -90,6 +93,7 @@ def get_candidate_applications(candidate_id: int, db: Session = Depends(get_db))
             "job_location": app.job.location,
             "match_score": app.match_score,
             "ai_reasoning": app.ai_reasoning,
+            "ai_recommendation": app.ai_recommendation,
             "status": app.status,
             "applied_at": app.applied_at,
         }
@@ -116,6 +120,7 @@ def get_job_applicants(job_id: int, db: Session = Depends(get_db)):
             "candidate_email": app.candidate.email,
             "match_score": app.match_score,
             "ai_reasoning": app.ai_reasoning,
+            "ai_recommendation": app.ai_recommendation,
             "status": app.status,
             "applied_at": app.applied_at,
         }
@@ -153,6 +158,7 @@ def get_application_detail(application_id: int, db: Session = Depends(get_db)):
         "candidate_email": application.candidate.email,
         "match_score": application.match_score,
         "ai_reasoning": application.ai_reasoning,
+        "ai_recommendation": application.ai_recommendation,
         "status": application.status,
         "applied_at": application.applied_at,
         "interview_questions": [q.question_text for q in questions],
@@ -184,3 +190,37 @@ def update_application_status(application_id: int, status_update: schemas.Status
     db.commit()
     db.refresh(application)
     return {"message": "Status updated successfully", "status": application.status}
+
+
+@router.put("/{application_id}/accept-ai-suggestion")
+def accept_ai_suggestion(application_id: int, db: Session = Depends(get_db)):
+    """One-click 'accept the AI's suggestion' for the recruiter.
+    Maps the AI's recommendation to a real status change. This is the
+    human-in-the-loop confirmation step — the AI never changes status
+    on its own; a recruiter must click this button."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    if not application.ai_recommendation:
+        raise HTTPException(status_code=400, detail="No AI recommendation available for this application")
+
+    mapping = {
+        "auto_shortlist": "shortlisted",
+        "auto_reject": "rejected",
+    }
+
+    new_status = mapping.get(application.ai_recommendation)
+    if not new_status:
+        raise HTTPException(
+            status_code=400,
+            detail="This application is marked 'needs_review' — please review it manually rather than auto-accepting.",
+        )
+
+    application.status = new_status
+    db.commit()
+    db.refresh(application)
+    return {
+        "message": f"AI suggestion accepted — status set to '{new_status}'",
+        "status": application.status,
+    }

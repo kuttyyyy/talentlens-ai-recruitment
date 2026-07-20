@@ -13,6 +13,7 @@ from app.routers import (
     interview_routes,
     dashboard_routes,
     admin_routes,
+    copilot_routes,
 )
 
 app = FastAPI(title="AI Recruitment System API")
@@ -35,6 +36,7 @@ app.include_router(application_routes.router)
 app.include_router(interview_routes.router)
 app.include_router(dashboard_routes.router)
 app.include_router(admin_routes.router)
+app.include_router(copilot_routes.router)
 
 
 @app.get("/")

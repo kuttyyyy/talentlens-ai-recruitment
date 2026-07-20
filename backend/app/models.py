@@ -68,6 +68,7 @@ class Application(Base):
     candidate_id = Column(Integer, ForeignKey("users.id"))
     match_score = Column(Float, nullable=True)         # AI-calculated 0-100 score
     ai_reasoning = Column(Text, nullable=True)          # AI's explanation for the score
+    ai_recommendation = Column(String, nullable=True)   # "auto_reject", "needs_review", or "auto_shortlist"
     status = Column(String, default="applied")          # applied, shortlisted, interview_scheduled, rejected, hired
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -89,7 +90,8 @@ class InterviewQuestion(Base):
 
 
 class EmailLog(Base):
-    """Interview invitation emails — kept as drafts until the recruiter confirms sending."""
+    """Interview invitation, rejection, and shortlist emails — kept as
+    drafts until the recruiter confirms sending."""
     __tablename__ = "email_logs"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -97,4 +99,5 @@ class EmailLog(Base):
     subject = Column(String, nullable=False)
     body = Column(Text, nullable=False)
     status = Column(String, default="draft")   # "draft" or "sent"
+    email_type = Column(String, default="interview_invite")   # "interview_invite", "rejected", or "shortlisted"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
