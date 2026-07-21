@@ -192,6 +192,11 @@ function CandidateDetail() {
         <p className="text-muted text-sm leading-relaxed border-t border-border pt-3 mb-4">
           {application.ai_reasoning}
         </p>
+        {application.possible_duplicate_of && (
+          <div className="bg-danger/10 border border-danger/30 text-danger text-xs rounded-lg px-3 py-2 mb-4">
+            ⚠ Possibly the same person as <strong>{application.possible_duplicate_of}</strong> — resumes look very similar
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <label className="text-xs text-muted uppercase tracking-wide">Status:</label>
           <select

@@ -180,6 +180,11 @@ function Applicants() {
               <p className="text-muted text-sm leading-relaxed border-t border-border pt-3 mb-4">
                 {app.ai_reasoning}
               </p>
+              {app.possible_duplicate_of && (
+                <div className="bg-danger/10 border border-danger/30 text-danger text-xs rounded-lg px-3 py-2 mb-4">
+                  ⚠ Possibly the same person as <strong>{app.possible_duplicate_of}</strong> — resumes look very similar
+                </div>
+              )}
 
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex items-center gap-2">

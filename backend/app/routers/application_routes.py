@@ -7,15 +7,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas
-from app.ai_engine import analyze_match_with_ai, fallback_match_score
+from app.ai_engine import analyze_match_with_ai, fallback_match_score, detect_duplicate_applicant
 
 router = APIRouter(prefix="/applications", tags=["Applications"])
 
 
 @router.post("/apply")
 def apply_to_job(job_id: int, candidate_id: int, db: Session = Depends(get_db)):
-    """A candidate applies to a job. Runs the AI matching engine immediately
-    and stores the score + reasoning + recommendation alongside the application."""
+    """A candidate applies to a job. Runs the AI matching engine immediately,
+    checks for possible duplicate applicants on this same job, and stores
+    everything alongside the application."""
 
     job = db.query(models.Job).filter(models.Job.id == job_id).first()
     if not job:
@@ -54,24 +55,48 @@ def apply_to_job(job_id: int, candidate_id: int, db: Session = Depends(get_db)):
             profile.extracted_skills or "", job.required_skills
         )
 
+    # Check for possible duplicate applicants on this same job
+    other_applications = (
+        db.query(models.Application)
+        .filter(models.Application.job_id == job_id)
+        .all()
+    )
+    other_data = []
+    for other_app in other_applications:
+        other_profile = db.query(models.CandidateProfile).filter(
+            models.CandidateProfile.user_id == other_app.candidate_id
+        ).first()
+        if other_profile and other_profile.resume_text:
+            other_data.append({
+                "candidate_name": other_app.candidate.full_name,
+                "resume_text": other_profile.resume_text,
+            })
+
+    duplicate_of = detect_duplicate_applicant(profile.resume_text, other_data)
+
     new_application = models.Application(
         job_id=job_id,
         candidate_id=candidate_id,
         match_score=match_score,
         ai_reasoning=reasoning,
         ai_recommendation=recommendation,
+        possible_duplicate_of=duplicate_of,
         status="applied",
     )
     db.add(new_application)
     db.commit()
     db.refresh(new_application)
 
-    return {
+    response = {
         "message": "Application submitted successfully",
         "match_score": match_score,
         "ai_reasoning": reasoning,
         "ai_recommendation": recommendation,
     }
+    if duplicate_of:
+        response["duplicate_warning"] = f"This resume looks similar to an existing applicant: {duplicate_of}"
+
+    return response
 
 
 @router.get("/candidate/{candidate_id}")
@@ -121,6 +146,7 @@ def get_job_applicants(job_id: int, db: Session = Depends(get_db)):
             "match_score": app.match_score,
             "ai_reasoning": app.ai_reasoning,
             "ai_recommendation": app.ai_recommendation,
+            "possible_duplicate_of": app.possible_duplicate_of,
             "status": app.status,
             "applied_at": app.applied_at,
         }
@@ -159,6 +185,7 @@ def get_application_detail(application_id: int, db: Session = Depends(get_db)):
         "match_score": application.match_score,
         "ai_reasoning": application.ai_reasoning,
         "ai_recommendation": application.ai_recommendation,
+        "possible_duplicate_of": application.possible_duplicate_of,
         "status": application.status,
         "applied_at": application.applied_at,
         "interview_questions": [q.question_text for q in questions],
@@ -194,10 +221,7 @@ def update_application_status(application_id: int, status_update: schemas.Status
 
 @router.put("/{application_id}/accept-ai-suggestion")
 def accept_ai_suggestion(application_id: int, db: Session = Depends(get_db)):
-    """One-click 'accept the AI's suggestion' for the recruiter.
-    Maps the AI's recommendation to a real status change. This is the
-    human-in-the-loop confirmation step — the AI never changes status
-    on its own; a recruiter must click this button."""
+    """One-click 'accept the AI's suggestion' for the recruiter."""
     application = db.query(models.Application).filter(models.Application.id == application_id).first()
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")

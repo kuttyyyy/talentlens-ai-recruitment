@@ -4,6 +4,7 @@
 # drafting) will add more functions here too.
 
 import json
+from difflib import SequenceMatcher
 from groq import Groq
 from app.config import GROQ_API_KEY
 
@@ -346,4 +347,25 @@ strings, one per issue. Otherwise leave suggestions as an empty list.
                 "AI review was temporarily unavailable — you can post as-is, or try checking again in a moment."
             ],
         }
-        
+
+
+def detect_duplicate_applicant(resume_text: str, other_applications: list):
+    """Checks if this resume looks like a near-duplicate of any other
+    applicant's resume for the SAME job. other_applications is a list of
+    dicts: [{"candidate_name": ..., "resume_text": ...}, ...].
+    Returns the matching candidate's name if a likely duplicate is found,
+    otherwise None. Pure text similarity — no AI call needed, so it's
+    instant and free."""
+    if not resume_text:
+        return None
+
+    for other in other_applications:
+        other_text = other.get("resume_text") or ""
+        if not other_text:
+            continue
+
+        similarity = SequenceMatcher(None, resume_text[:3000], other_text[:3000]).ratio()
+        if similarity > 0.85:
+            return other.get("candidate_name")
+
+    return None
