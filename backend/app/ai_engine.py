@@ -288,3 +288,59 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
     except Exception as e:
         print(f"[AI ENGINE] Copilot answer failed: {e}", flush=True)
         return {"error": str(e)}
+
+
+def check_job_description_quality(title: str, description: str, required_skills: str, location: str, job_type: str):
+    """Reviews a job posting before it goes live and suggests improvements.
+    Returns suggestions only — never blocks posting; the recruiter decides.
+    Falls back to a generic 'couldn't analyze' result if the AI call fails,
+    so a hiccup here never stops the recruiter from posting."""
+    if not client:
+        return {"overall_quality": "unknown", "suggestions": []}
+
+    prompt = f"""You are an expert recruiter reviewing a job posting for clarity
+and completeness before it goes live to candidates.
+
+JOB TITLE: {title}
+DESCRIPTION: {description}
+REQUIRED SKILLS: {required_skills}
+LOCATION: {location or "Not specified"}
+JOB TYPE: {job_type or "Not specified"}
+
+Review this posting and identify anything that's missing, vague, or could
+confuse candidates — for example: no mention of experience level, an overly
+broad or overly narrow skills list, a description that doesn't explain
+day-to-day responsibilities, missing location/remote clarity, or an
+unrealistic combination of requirements. Only flag genuine issues — if the
+posting is already clear and complete, return an empty suggestions list.
+
+Return ONLY valid JSON in exactly this shape, no extra commentary, no markdown:
+{{
+  "overall_quality": "good",
+  "suggestions": []
+}}
+
+If there are issues, set "overall_quality" to "needs_improvement" instead of
+"good", and fill "suggestions" with plain strings, one per issue.
+"""
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+            max_tokens=1500,
+        )
+        result = json.loads(response.choices[0].message.content)
+        if "overall_quality" not in result or "suggestions" not in result:
+            raise ValueError("Unexpected response shape from AI")
+        return result
+    except Exception as e:
+        print(f"[AI ENGINE] Job quality check failed, using fallback: {e}", flush=True)
+        return {
+            "overall_quality": "unknown",
+            "suggestions": [
+                "AI review was temporarily unavailable — you can post as-is, or try checking again in a moment."
+            ],
+        }
+        

@@ -3,12 +3,35 @@
 # candidates search and browse open jobs.
 
 from typing import Optional
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas
+from app.ai_engine import check_job_description_quality
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
+
+
+class JobQualityCheckRequest(BaseModel):
+    title: str
+    description: str
+    required_skills: str
+    location: Optional[str] = None
+    job_type: Optional[str] = None
+
+
+@router.post("/check-quality")
+def check_quality(request: JobQualityCheckRequest):
+    """Reviews a job posting draft before it's saved. Does NOT save
+    anything — just returns suggestions for the recruiter to consider."""
+    return check_job_description_quality(
+        title=request.title,
+        description=request.description,
+        required_skills=request.required_skills,
+        location=request.location,
+        job_type=request.job_type,
+    )
 
 
 @router.post("/", response_model=schemas.JobOut)

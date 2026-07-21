@@ -1,7 +1,7 @@
 # interview_routes.py
-# Handles the "agentic" interview workflow:
+# Handles the "agentic" interview + status-notification workflow:
 #   1. Generate tailored interview questions for an applicant
-#   2. Draft an invitation email
+#   2. Draft an interview invite, rejection, or shortlist email
 #   3. Only send it once the recruiter explicitly confirms
 
 from pydantic import BaseModel
@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models
-from app.ai_engine import generate_interview_questions, draft_interview_email
+from app.ai_engine import generate_interview_questions, draft_interview_email, draft_status_email
 from app.email_utils import send_email
 
 router = APIRouter(prefix="/interview", tags=["Interview"])
@@ -50,7 +50,6 @@ def create_interview_questions(application_id: int, db: Session = Depends(get_db
         error_detail = questions.get("error") if isinstance(questions, dict) else "Unknown error"
         raise HTTPException(status_code=503, detail=f"AI question generation failed: {error_detail}")
 
-    # Clear any previously generated questions for this application, then save the fresh set
     db.query(models.InterviewQuestion).filter(
         models.InterviewQuestion.application_id == application_id
     ).delete()
@@ -101,6 +100,56 @@ def create_email_draft(application_id: int, request: EmailDraftRequest, db: Sess
         subject=draft["subject"],
         body=draft["body"],
         status="draft",
+        email_type="interview_invite",
+    )
+    db.add(email_log)
+    db.commit()
+    db.refresh(email_log)
+
+    return {
+        "email_log_id": email_log.id,
+        "subject": email_log.subject,
+        "body": email_log.body,
+        "candidate_email": candidate.email,
+    }
+
+
+@router.post("/draft-status-email/{application_id}")
+def create_status_email_draft(application_id: int, request: EmailDraftRequest, db: Session = Depends(get_db)):
+    """Drafts a rejection or shortlist-notice email, based on the
+    application's CURRENT status. Saved as a draft — not sent yet."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    if application.status not in ("rejected", "shortlisted"):
+        raise HTTPException(
+            status_code=400,
+            detail="Set the application's status to 'rejected' or 'shortlisted' before drafting this email.",
+        )
+
+    job = application.job
+    candidate = application.candidate
+    recruiter = job.recruiter
+
+    draft = draft_status_email(
+        candidate_name=candidate.full_name,
+        job_title=job.title,
+        company_name=request.company_name,
+        recruiter_name=recruiter.full_name,
+        email_type=application.status,
+    )
+
+    if not draft or (isinstance(draft, dict) and "error" in draft):
+        error_detail = draft.get("error") if isinstance(draft, dict) else "Unknown error"
+        raise HTTPException(status_code=503, detail=f"AI email drafting failed: {error_detail}")
+
+    email_log = models.EmailLog(
+        application_id=application_id,
+        subject=draft["subject"],
+        body=draft["body"],
+        status="draft",
+        email_type=application.status,
     )
     db.add(email_log)
     db.commit()
@@ -127,7 +176,6 @@ def confirm_and_send_email(email_log_id: int, request: SendEmailRequest, db: Ses
     ).first()
     candidate_email = application.candidate.email
 
-    # Use whatever the recruiter finalized (they may have edited the AI's draft)
     success = send_email(to_address=candidate_email, subject=request.subject, body=request.body)
 
     if not success:
@@ -138,8 +186,8 @@ def confirm_and_send_email(email_log_id: int, request: SendEmailRequest, db: Ses
     email_log.status = "sent"
     db.commit()
 
-    # Move the application forward automatically once an invite is sent
-    application.status = "interview_scheduled"
-    db.commit()
+    if email_log.email_type == "interview_invite":
+        application.status = "interview_scheduled"
+        db.commit()
 
     return {"message": "Email sent successfully"}
