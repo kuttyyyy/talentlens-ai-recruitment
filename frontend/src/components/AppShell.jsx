@@ -4,6 +4,7 @@
 // the right. Every future page (Jobs, Applicants, Admin, etc.) will use
 // this same shell so the whole app feels consistent.
 
+import { useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 
 // Simple nav items — we'll add more here as we build later modules
@@ -22,12 +23,31 @@ const NAV_ITEMS = [
 function AppShell({ children, activePage }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const user = JSON.parse(localStorage.getItem("user"));
+
+  let user = null;
+  try {
+    user = JSON.parse(localStorage.getItem("user"));
+  } catch {
+    user = null;
+  }
+
+  // If there's no logged-in user (missing, cleared, or corrupted local
+  // storage), redirect to login instead of letting child pages crash
+  // trying to read user.id / user.role on a null value.
+  useEffect(() => {
+    if (!user) {
+      navigate("/login");
+    }
+  }, [user, navigate]);
 
   function handleLogout() {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     navigate("/login");
+  }
+
+  if (!user) {
+    return null; // brief blank frame while the redirect above kicks in
   }
 
   // Only show nav links relevant to this user's role
