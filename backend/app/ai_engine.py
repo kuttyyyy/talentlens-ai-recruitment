@@ -307,12 +307,14 @@ REQUIRED SKILLS: {required_skills}
 LOCATION: {location or "Not specified"}
 JOB TYPE: {job_type or "Not specified"}
 
-Review this posting and identify anything that's missing, vague, or could
-confuse candidates — for example: no mention of experience level, an overly
-broad or overly narrow skills list, a description that doesn't explain
-day-to-day responsibilities, missing location/remote clarity, or an
-unrealistic combination of requirements. Only flag genuine issues — if the
-posting is already clear and complete, return an empty suggestions list.
+Only flag a genuine problem: something so vague or missing that a real
+candidate could not reasonably decide whether to apply (e.g. no sense of
+what the role actually involves, or a one-word skills list). Do NOT flag
+minor polish items like missing salary, missing perks, missing exact start
+date, or missing degree requirements — those are optional details, not
+blockers, and most real job posts omit them. If the posting gives a candidate
+enough to understand the role and decide to apply, treat it as good even if
+it isn't perfect.
 
 Return ONLY valid JSON in exactly this shape, no extra commentary, no markdown:
 {{
@@ -320,8 +322,9 @@ Return ONLY valid JSON in exactly this shape, no extra commentary, no markdown:
   "suggestions": []
 }}
 
-If there are issues, set "overall_quality" to "needs_improvement" instead of
-"good", and fill "suggestions" with plain strings, one per issue.
+If there are genuine blocking issues, set "overall_quality" to
+"needs_improvement" instead of "good", and fill "suggestions" with plain
+strings, one per issue. Otherwise leave suggestions as an empty list.
 """
     try:
         response = client.chat.completions.create(
