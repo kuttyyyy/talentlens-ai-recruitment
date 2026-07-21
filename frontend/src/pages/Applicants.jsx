@@ -3,18 +3,21 @@
 // best-to-worst by AI match score, with reasoning, and update their status.
 
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import AppShell from "../components/AppShell";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 const STATUS_OPTIONS = ["applied", "shortlisted", "interview_scheduled", "rejected", "hired"];
 
 function Applicants() {
+  const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem("user"));
   const [myJobs, setMyJobs] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
   const [applicants, setApplicants] = useState([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
   const [loadingApplicants, setLoadingApplicants] = useState(false);
+  const [acceptingId, setAcceptingId] = useState(null);
 
   useEffect(() => {
     fetch(`${BASE_URL}/jobs/recruiter/${user.id}`)
@@ -44,10 +47,53 @@ function Applicants() {
     });
   }
 
+  async function acceptAiSuggestion(applicationId) {
+    setAcceptingId(applicationId);
+    try {
+      const res = await fetch(`${BASE_URL}/applications/${applicationId}/accept-ai-suggestion`, {
+        method: "PUT",
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setApplicants((prev) =>
+          prev.map((a) => (a.id === applicationId ? { ...a, status: data.status } : a))
+        );
+      } else {
+        alert(data.detail || "Couldn't accept the AI suggestion.");
+      }
+    } finally {
+      setAcceptingId(null);
+    }
+  }
+
   function scoreColor(score) {
     if (score >= 70) return "text-success border-success/40 bg-success/10";
     if (score >= 40) return "text-gold border-gold/40 bg-gold/10";
     return "text-danger border-danger/40 bg-danger/10";
+  }
+
+  function recommendationBadge(recommendation) {
+    const config = {
+      auto_shortlist: {
+        label: "AI: Shortlist",
+        classes: "text-success border-success/40 bg-success/10",
+      },
+      auto_reject: {
+        label: "AI: Reject",
+        classes: "text-danger border-danger/40 bg-danger/10",
+      },
+      needs_review: {
+        label: "AI: Needs Review",
+        classes: "text-gold border-gold/40 bg-gold/10",
+      },
+    };
+    const c = config[recommendation];
+    if (!c) return null;
+    return (
+      <span className={`text-xs font-medium px-2.5 py-1 rounded-full border whitespace-nowrap ${c.classes}`}>
+        {c.label}
+      </span>
+    );
   }
 
   // --- View 1: pick which job to review ---
@@ -123,28 +169,51 @@ function Applicants() {
                     <p className="text-muted text-xs">{app.candidate_email}</p>
                   </div>
                 </div>
-                <span className={`text-sm font-semibold px-3 py-1 rounded-full border whitespace-nowrap ${scoreColor(app.match_score)}`}>
-                  {app.match_score}% match
-                </span>
+                <div className="flex items-center gap-2">
+                  {recommendationBadge(app.ai_recommendation)}
+                  <span className={`text-sm font-semibold px-3 py-1 rounded-full border whitespace-nowrap ${scoreColor(app.match_score)}`}>
+                    {app.match_score}% match
+                  </span>
+                </div>
               </div>
 
               <p className="text-muted text-sm leading-relaxed border-t border-border pt-3 mb-4">
                 {app.ai_reasoning}
               </p>
 
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-muted uppercase tracking-wide">Status:</label>
-                <select
-                  value={app.status}
-                  onChange={(e) => updateStatus(app.id, e.target.value)}
-                  className="text-sm px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-text focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition"
-                >
-                  {STATUS_OPTIONS.map((s) => (
-                    <option key={s} value={s}>
-                      {s.replace("_", " ")}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-muted uppercase tracking-wide">Status:</label>
+                  <select
+                    value={app.status}
+                    onChange={(e) => updateStatus(app.id, e.target.value)}
+                    className="text-sm px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-text focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition"
+                  >
+                    {STATUS_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s.replace("_", " ")}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {(app.ai_recommendation === "auto_shortlist" || app.ai_recommendation === "auto_reject") && (
+                    <button
+                      onClick={() => acceptAiSuggestion(app.id)}
+                      disabled={acceptingId === app.id}
+                      className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gold/40 text-gold hover:bg-gold/10 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {acceptingId === app.id ? "Applying..." : "Accept AI suggestion"}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => navigate(`/applicants/${app.id}`)}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg border border-border text-muted hover:text-text hover:border-gold/40 transition"
+                  >
+                    View details →
+                  </button>
+                </div>
               </div>
             </div>
           ))}

@@ -11,6 +11,7 @@ import PostJob from "./pages/PostJob";
 import BrowseJobs from "./pages/BrowseJobs";
 import MyApplications from "./pages/MyApplications";
 import Applicants from "./pages/Applicants";
+import CandidateDetail from "./pages/CandidateDetail";
 import RecruiterDashboard from "./pages/RecruiterDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
 
@@ -27,6 +28,7 @@ function App() {
         <Route path="/browse-jobs" element={<BrowseJobs />} />
         <Route path="/my-applications" element={<MyApplications />} />
         <Route path="/applicants" element={<Applicants />} />
+        <Route path="/applicants/:applicationId" element={<CandidateDetail />} />
         <Route path="/reports" element={<RecruiterDashboard />} />
         <Route path="/admin" element={<AdminDashboard />} />
       </Routes>
