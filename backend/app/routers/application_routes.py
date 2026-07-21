@@ -214,6 +214,10 @@ def update_application_status(application_id: int, status_update: schemas.Status
         raise HTTPException(status_code=400, detail=f"Status must be one of: {', '.join(valid_statuses)}")
 
     application.status = status_update.status
+    if status_update.status == "hired" and not application.hired_at:
+        from datetime import datetime, timezone
+        application.hired_at = datetime.now(timezone.utc)
+
     db.commit()
     db.refresh(application)
     return {"message": "Status updated successfully", "status": application.status}

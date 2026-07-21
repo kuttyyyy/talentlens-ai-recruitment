@@ -1,6 +1,6 @@
 // RecruiterDashboard.jsx
 // A recruiter's reporting overview: an AI copilot to ask questions about
-// their hiring data, plus totals, average match score, status breakdown,
+// their hiring data, totals, status breakdown, hiring funnel, time-to-hire,
 // and a per-job performance table.
 
 import { useState, useEffect, useRef } from "react";
@@ -29,8 +29,7 @@ function RecruiterDashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Copilot chat state
-  const [messages, setMessages] = useState([]); // { role: "user" | "assistant", text: string }
+  const [messages, setMessages] = useState([]);
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const scrollRef = useRef(null);
@@ -102,6 +101,17 @@ function RecruiterDashboard() {
     );
   }
 
+  if (!stats) {
+    return (
+      <AppShell>
+        <div className="bg-danger/10 border border-danger/40 text-danger text-sm rounded-lg px-4 py-3 max-w-xl">
+          Couldn't load your dashboard data. Make sure the backend server is
+          running, then refresh this page.
+        </div>
+      </AppShell>
+    );
+  }
+
   const statCards = [
     { label: "Open Jobs", value: stats.open_jobs, sub: `${stats.total_jobs} total posted` },
     { label: "Total Applicants", value: stats.total_applicants, sub: "across all jobs" },
@@ -138,10 +148,7 @@ function RecruiterDashboard() {
             ))}
           </div>
         ) : (
-          <div
-            ref={scrollRef}
-            className="flex flex-col gap-3 mb-4 max-h-72 overflow-y-auto pr-1"
-          >
+          <div ref={scrollRef} className="flex flex-col gap-3 mb-4 max-h-72 overflow-y-auto pr-1">
             {messages.map((m, i) => (
               <div
                 key={i}
@@ -154,9 +161,7 @@ function RecruiterDashboard() {
                 {m.text}
               </div>
             ))}
-            {asking && (
-              <div className="text-sm text-muted self-start px-3 py-2">Thinking…</div>
-            )}
+            {asking && <div className="text-sm text-muted self-start px-3 py-2">Thinking…</div>}
           </div>
         )}
 
@@ -189,14 +194,50 @@ function RecruiterDashboard() {
         ))}
       </div>
 
+      {/* Hiring funnel */}
+      <h2 className="text-text font-display text-xl mb-3">Hiring Funnel</h2>
+      <div className="bg-surface border border-border rounded-xl p-5 max-w-3xl mb-10">
+        {stats.total_applicants === 0 ? (
+          <p className="text-muted text-sm">No applicants yet — funnel will appear once candidates apply.</p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {stats.funnel.map((stage) => (
+              <div key={stage.stage}>
+                <div className="flex items-center justify-between mb-1 text-sm">
+                  <span className="text-text">
+                    {stage.stage === "applied" && "Applied"}
+                    {stage.stage === "shortlisted" && "Shortlisted"}
+                    {stage.stage === "interview_scheduled" && "Interviewed"}
+                    {stage.stage === "hired" && "Hired"}
+                  </span>
+                  <span className="text-muted">
+                    {stage.count} <span className="text-muted/60">({stage.percent}%)</span>
+                  </span>
+                </div>
+                <div className="w-full h-2 bg-surface-2 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gold rounded-full transition-all"
+                    style={{ width: `${stage.percent}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {stats.average_time_to_hire_days !== null && stats.average_time_to_hire_days !== undefined && (
+          <div className="mt-5 pt-4 border-t border-border flex items-center gap-2">
+            <span className="text-2xl font-display text-text">{stats.average_time_to_hire_days}</span>
+            <span className="text-muted text-sm">avg. days from application to hire</span>
+          </div>
+        )}
+      </div>
+
       {/* Status breakdown */}
       <h2 className="text-text font-display text-xl mb-3">Application Status Breakdown</h2>
       <div className="flex flex-wrap gap-3 mb-10 max-w-3xl">
         {Object.entries(stats.status_breakdown).map(([status, count]) => (
-          <div
-            key={status}
-            className="bg-surface border border-border rounded-lg px-4 py-2 flex items-center gap-2"
-          >
+          <div key={status} className="bg-surface border border-border rounded-lg px-4 py-2 flex items-center gap-2">
             <span className="text-text font-medium">{count}</span>
             <span className="text-muted text-xs">{STATUS_LABELS[status]}</span>
           </div>
@@ -242,10 +283,7 @@ function RecruiterDashboard() {
                     {job.average_match_score}%
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={() => navigate("/applicants")}
-                      className="text-gold text-xs hover:underline"
-                    >
+                    <button onClick={() => navigate("/applicants")} className="text-gold text-xs hover:underline">
                       View applicants →
                     </button>
                   </td>

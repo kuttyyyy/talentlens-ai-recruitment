@@ -70,6 +70,7 @@ class Application(Base):
     ai_reasoning = Column(Text, nullable=True)          # AI's explanation for the score
     ai_recommendation = Column(String, nullable=True)   # "auto_reject", "needs_review", or "auto_shortlist"
     possible_duplicate_of = Column(String, nullable=True)  # candidate name, if resume looks like a near-duplicate
+    hired_at = Column(DateTime(timezone=True), nullable=True)  # set automatically when status becomes "hired"
     status = Column(String, default="applied")          # applied, shortlisted, interview_scheduled, rejected, hired
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
 
