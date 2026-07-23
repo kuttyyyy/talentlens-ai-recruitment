@@ -2,7 +2,7 @@
 // A recruiter's view: pick one of their jobs, see every applicant ranked
 // best-to-worst by AI match score, with reasoning, and update their status.
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import AppShell from "../components/AppShell";
 
@@ -19,12 +19,35 @@ function Applicants() {
   const [loadingApplicants, setLoadingApplicants] = useState(false);
   const [acceptingId, setAcceptingId] = useState(null);
 
+  // --- job menu / edit state ---
+  const [openMenuJobId, setOpenMenuJobId] = useState(null);
+  const [editingJobId, setEditingJobId] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [closingJobId, setClosingJobId] = useState(null);
+  const menuRef = useRef(null);
+
   useEffect(() => {
+    loadMyJobs();
+  }, []);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setOpenMenuJobId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  function loadMyJobs() {
+    setLoadingJobs(true);
     fetch(`${BASE_URL}/jobs/recruiter/${user.id}`)
       .then((res) => res.json())
       .then((data) => setMyJobs(data))
       .finally(() => setLoadingJobs(false));
-  }, []);
+  }
 
   function openJob(job) {
     setSelectedJob(job);
@@ -36,7 +59,6 @@ function Applicants() {
   }
 
   async function updateStatus(applicationId, newStatus) {
-    // Update the UI immediately for a snappy feel, then confirm with the server
     setApplicants((prev) =>
       prev.map((a) => (a.id === applicationId ? { ...a, status: newStatus } : a))
     );
@@ -66,6 +88,64 @@ function Applicants() {
     }
   }
 
+  function startEdit(job) {
+    setEditingJobId(job.id);
+    setEditForm({
+      title: job.title,
+      description: job.description,
+      required_skills: job.required_skills,
+      location: job.location || "",
+      job_type: job.job_type || "Full-time",
+    });
+    setOpenMenuJobId(null);
+  }
+
+  function cancelEdit() {
+    setEditingJobId(null);
+    setEditForm(null);
+  }
+
+  async function saveEdit(jobId) {
+    setSavingEdit(true);
+    try {
+      const res = await fetch(`${BASE_URL}/jobs/${jobId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Could not update job");
+
+      setMyJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, ...editForm } : j)));
+      setEditingJobId(null);
+      setEditForm(null);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function closeJob(job) {
+    if (!window.confirm(`Close "${job.title}"? Candidates will no longer be able to apply.`)) {
+      return;
+    }
+    setClosingJobId(job.id);
+    setOpenMenuJobId(null);
+    try {
+      const res = await fetch(`${BASE_URL}/jobs/${job.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "Could not close job");
+      }
+      setMyJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, status: "closed" } : j)));
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setClosingJobId(null);
+    }
+  }
+
   function scoreColor(score) {
     if (score >= 70) return "text-success border-success/40 bg-success/10";
     if (score >= 40) return "text-gold border-gold/40 bg-gold/10";
@@ -74,18 +154,9 @@ function Applicants() {
 
   function recommendationBadge(recommendation) {
     const config = {
-      auto_shortlist: {
-        label: "AI: Shortlist",
-        classes: "text-success border-success/40 bg-success/10",
-      },
-      auto_reject: {
-        label: "AI: Reject",
-        classes: "text-danger border-danger/40 bg-danger/10",
-      },
-      needs_review: {
-        label: "AI: Needs Review",
-        classes: "text-gold border-gold/40 bg-gold/10",
-      },
+      auto_shortlist: { label: "AI: Shortlist", classes: "text-success border-success/40 bg-success/10" },
+      auto_reject: { label: "AI: Reject", classes: "text-danger border-danger/40 bg-danger/10" },
+      needs_review: { label: "AI: Needs Review", classes: "text-gold border-gold/40 bg-gold/10" },
     };
     const c = config[recommendation];
     if (!c) return null;
@@ -112,22 +183,148 @@ function Applicants() {
             <p className="text-muted text-sm">Post a job first, then applicants will appear here.</p>
           </div>
         ) : (
-          <div className="flex flex-col gap-3 max-w-xl">
-            {myJobs.map((job) => (
-              <button
-                key={job.id}
-                onClick={() => openJob(job)}
-                className="text-left bg-surface border border-border hover:border-gold/40 transition rounded-xl p-4 flex items-center justify-between"
-              >
-                <div>
-                  <p className="text-text font-medium">{job.title}</p>
-                  <p className="text-muted text-xs mt-1">
-                    {job.location || "Remote"} · {job.status === "open" ? "Open" : "Closed"}
-                  </p>
+          <div className="flex flex-col gap-4 max-w-2xl">
+            {myJobs.map((job) => {
+              const isEditing = editingJobId === job.id;
+              const isMenuOpen = openMenuJobId === job.id;
+
+              return (
+                <div
+                  key={job.id}
+                  className="bg-surface border border-border rounded-xl p-5 hover:border-gold/40 transition relative"
+                >
+                  {/* 3-dot menu */}
+                  <div className="absolute top-4 right-4" ref={isMenuOpen ? menuRef : null}>
+                    <button
+                      onClick={() => setOpenMenuJobId(isMenuOpen ? null : job.id)}
+                      className="text-muted hover:text-text px-1.5 py-1 rounded-md hover:bg-surface-2 transition"
+                      aria-label="Job options"
+                    >
+                      ⋮
+                    </button>
+                    {isMenuOpen && (
+                      <div className="absolute right-0 mt-1 w-36 bg-surface-2 border border-border rounded-lg shadow-lg overflow-hidden z-10">
+                        <button
+                          onClick={() => startEdit(job)}
+                          className="w-full text-left text-sm px-3 py-2 text-text hover:bg-border/40 transition"
+                        >
+                          Edit
+                        </button>
+                        {job.status === "open" && (
+                          <button
+                            onClick={() => closeJob(job)}
+                            disabled={closingJobId === job.id}
+                            className="w-full text-left text-sm px-3 py-2 text-danger hover:bg-danger/10 transition disabled:opacity-50"
+                          >
+                            {closingJobId === job.id ? "Closing..." : "Close Job"}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {isEditing ? (
+                    // --- Inline edit form ---
+                    <div className="flex flex-col gap-3 pr-8">
+                      <input
+                        value={editForm.title}
+                        onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+                        placeholder="Job title"
+                        className="text-sm px-3 py-2 rounded-lg bg-surface-2 border border-border text-text focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition"
+                      />
+                      <textarea
+                        value={editForm.description}
+                        onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                        placeholder="Description"
+                        rows={3}
+                        className="text-sm px-3 py-2 rounded-lg bg-surface-2 border border-border text-text focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition resize-none"
+                      />
+                      <input
+                        value={editForm.required_skills}
+                        onChange={(e) => setEditForm({ ...editForm, required_skills: e.target.value })}
+                        placeholder="Required skills (comma-separated)"
+                        className="text-sm px-3 py-2 rounded-lg bg-surface-2 border border-border text-text focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition"
+                      />
+                      <div className="flex gap-3">
+                        <input
+                          value={editForm.location}
+                          onChange={(e) => setEditForm({ ...editForm, location: e.target.value })}
+                          placeholder="Location"
+                          className="flex-1 text-sm px-3 py-2 rounded-lg bg-surface-2 border border-border text-text focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition"
+                        />
+                        <select
+                          value={editForm.job_type}
+                          onChange={(e) => setEditForm({ ...editForm, job_type: e.target.value })}
+                          className="text-sm px-3 py-2 rounded-lg bg-surface-2 border border-border text-text focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition"
+                        >
+                          <option>Full-time</option>
+                          <option>Part-time</option>
+                          <option>Internship</option>
+                          <option>Contract</option>
+                        </select>
+                      </div>
+                      <div className="flex gap-2 justify-end">
+                        <button
+                          onClick={cancelEdit}
+                          className="text-sm px-3 py-1.5 rounded-lg border border-border text-muted hover:text-text transition"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => saveEdit(job.id)}
+                          disabled={savingEdit}
+                          className="text-sm px-3 py-1.5 rounded-lg bg-gold text-ink font-semibold hover:opacity-90 transition disabled:opacity-50"
+                        >
+                          {savingEdit ? "Saving..." : "Save"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    // --- Normal job card, clickable to view applicants ---
+                    <button onClick={() => openJob(job)} className="text-left w-full pr-8">
+                      <div className="flex items-start justify-between mb-2">
+                        <h2 className="text-text font-display text-xl">{job.title}</h2>
+                        {job.job_type && (
+                          <span className="text-xs bg-gold/10 text-gold px-2.5 py-1 rounded-full border border-gold/30 whitespace-nowrap ml-3">
+                            {job.job_type}
+                          </span>
+                        )}
+                      </div>
+
+                      {job.location && <p className="text-muted text-xs mb-3">📍 {job.location}</p>}
+
+                      <p className="text-muted text-sm mb-4 leading-relaxed">{job.description}</p>
+
+                      {job.required_skills && (
+                        <div className="flex flex-wrap gap-2 mb-4">
+                          {job.required_skills.split(",").map((skill) => (
+                            <span
+                              key={skill}
+                              className="bg-surface-2 text-muted text-xs px-2.5 py-1 rounded-full border border-border"
+                            >
+                              {skill.trim()}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full border ${
+                            job.status === "open"
+                              ? "text-success bg-success/10 border-success/30"
+                              : "text-muted bg-surface-2 border-border"
+                          }`}
+                        >
+                          {job.status === "open" ? "Open" : "Closed"}
+                        </span>
+                        <span className="text-muted text-xs">View applicants →</span>
+                      </div>
+                    </button>
+                  )}
                 </div>
-                <span className="text-muted text-xs">View applicants →</span>
-              </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </AppShell>
