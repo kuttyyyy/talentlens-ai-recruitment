@@ -27,6 +27,9 @@ function CandidateDetail() {
   const [emailError, setEmailError] = useState("");
   const [emailSentMessage, setEmailSentMessage] = useState("");
 
+  // Collapsed by default — recruiter clicks the arrow to expand/hide it
+  const [historyOpen, setHistoryOpen] = useState(false);
+
   useEffect(() => {
     loadApplication();
   }, [applicationId]);
@@ -309,21 +312,30 @@ function CandidateDetail() {
 
         {application.emails && application.emails.length > 0 && (
           <div className="mt-6 pt-4 border-t border-border">
-            <p className="text-xs text-muted uppercase tracking-wide mb-2">Email History</p>
-            <div className="flex flex-col gap-2">
-              {application.emails.map((e) => (
-                <div key={e.id} className="text-sm flex items-center justify-between">
-                  <span className="text-text/90">{e.subject}</span>
-                  <span className={`text-xs px-2 py-0.5 rounded-full border ${
-                    e.status === "sent"
-                      ? "text-success border-success/40 bg-success/10"
-                      : "text-muted border-border"
-                  }`}>
-                    {e.status}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <button
+              onClick={() => setHistoryOpen((prev) => !prev)}
+              className="w-full flex items-center justify-between text-xs text-muted uppercase tracking-wide hover:text-text transition"
+            >
+              <span>Email History ({application.emails.length})</span>
+              <span className={`transition-transform ${historyOpen ? "rotate-90" : ""}`}>▸</span>
+            </button>
+
+            {historyOpen && (
+              <div className="flex flex-col gap-2 mt-3">
+                {application.emails.map((e) => (
+                  <div key={e.id} className="text-sm flex items-center justify-between">
+                    <span className="text-text/90">{e.subject}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full border ${
+                      e.status === "sent"
+                        ? "text-success border-success/40 bg-success/10"
+                        : "text-muted border-border"
+                    }`}>
+                      {e.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
