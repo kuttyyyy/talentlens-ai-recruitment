@@ -2,6 +2,7 @@
 # Centralizes every call we make to the AI model (via Groq).
 
 import json
+import re
 import time
 from difflib import SequenceMatcher
 from groq import Groq
@@ -245,7 +246,36 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
     return result.get("answer", "")
 
 
-prompt = f"""You are an expert copy editor reviewing a job posting for
+def check_job_description_quality(title: str, description: str, required_skills: str, location: str, job_type: str):
+    """Reviews a job posting before it goes live: checks the title,
+    description, and required skills together for completeness AND
+    writing quality (spelling, grammar, sentence structure)."""
+
+    # --- Rule-based pre-check: catches obvious issues without relying on AI ---
+    rule_issues = []
+
+    stripped = description.strip()
+
+    if stripped and not stripped.endswith((".", "!", "?")):
+        rule_issues.append(
+            "The description doesn't end with proper punctuation, or has extra unrelated text at the end — please review it."
+        )
+
+    if re.findall(r"[a-z]\.[A-Za-z]", description):
+        rule_issues.append("There's a missing space after a period somewhere in the description.")
+
+    weird_case = set(re.findall(r"\b[a-z]+[A-Z][a-zA-Z]*\b", description))
+    if weird_case:
+        rule_issues.append(f"Unusual capitalization found in: {', '.join(weird_case)} — check for typos.")
+
+    # --- AI check ---
+    if not client:
+        return {
+            "overall_quality": "needs_improvement" if rule_issues else "good",
+            "suggestions": rule_issues,
+        }
+
+    prompt = f"""You are an expert copy editor reviewing a job posting for
 publication. Your MOST IMPORTANT job is to catch every spelling mistake,
 grammar error, missing punctuation (commas, periods, capitalization), and
 awkward phrasing — do not let a single one slip through.
@@ -278,58 +308,27 @@ Respond with JSON in exactly this shape:
   "suggestions": ["one string per issue found, empty array if none"]
 }}
 """
-    """Reviews a job posting before it goes live: checks the title,
-    description, and required skills together for completeness AND
-    writing quality (spelling, grammar, sentence structure)."""
-    if not client:
-        return {"overall_quality": "unknown", "suggestions": []}
-
-    prompt = f"""You are an expert recruiter and copy editor reviewing a job
-posting in JSON format before it goes live to candidates. Review every
-field below carefully — the title, the description, and the required
-skills — as a complete package.
-
-JOB TITLE: {title}
-DESCRIPTION: {description}
-REQUIRED SKILLS: {required_skills}
-LOCATION: {location or "Not specified"}
-JOB TYPE: {job_type or "Not specified"}
-
-Check each field for:
-1. CONTENT: Is the title a real, specific job title (not a placeholder or
-   single vague word)? Does the description actually explain what the
-   person will do day-to-day, and is it long enough to be useful (a single
-   short sentence is usually too thin)? Are the required skills specific
-   and relevant to the title (not just one word, and not mismatched with
-   the role)?
-2. WRITING QUALITY: spelling mistakes, grammar errors, awkward or broken
-   sentence structure, or typos anywhere in the title or description.
-   Quote the specific problematic phrase and suggest the correction.
-
-Be thorough — check the title, description, AND skills list individually,
-not just the description. Only flag genuine issues, but do not skip a field
-just because another field looks fine.
-
-Respond with JSON in exactly this shape:
-{{
-  "overall_quality": "good or needs_improvement",
-  "suggestions": ["one string per issue found, empty array if none"]
-}}
-"""
     result = _generate_json(prompt, temperature=0.1, max_tokens=1500)
+
     if "error" in result:
         return {
-            "overall_quality": "unknown",
-            "suggestions": [
+            "overall_quality": "needs_improvement" if rule_issues else "good",
+            "suggestions": rule_issues or [
                 "AI review was temporarily unavailable — you can post as-is, or try checking again in a moment."
             ],
         }
-    if "overall_quality" not in result or "suggestions" not in result:
-        return {
-            "overall_quality": "unknown",
-            "suggestions": ["AI response was in an unexpected format — you can post as-is."],
-        }
-    return result
+
+    ai_suggestions = result.get("suggestions", [])
+    if not isinstance(ai_suggestions, list):
+        ai_suggestions = []
+
+    combined_suggestions = rule_issues + ai_suggestions
+    overall = "needs_improvement" if combined_suggestions else result.get("overall_quality", "good")
+
+    return {
+        "overall_quality": overall,
+        "suggestions": combined_suggestions,
+    }
 
 
 def detect_duplicate_applicant(resume_text: str, other_applications: list):
