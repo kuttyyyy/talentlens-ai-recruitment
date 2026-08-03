@@ -316,7 +316,7 @@ Respond with JSON in exactly this shape:
   "suggestions": ["one string per issue found, empty array if none"]
 }}
 """
-    result = _generate_json(prompt, temperature=0.2, max_tokens=1500)
+    result = _generate_json(prompt, temperature=0.1, max_tokens=1500)
     if "error" in result:
         return {
             "overall_quality": "unknown",
