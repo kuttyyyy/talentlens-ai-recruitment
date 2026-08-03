@@ -1,17 +1,46 @@
 # ai_engine.py
 # Centralizes every call we make to the AI model (via Groq).
-# Later modules (match-score reasoning, interview questions, email
-# drafting) will add more functions here too.
 
 import json
+import time
 from difflib import SequenceMatcher
 from groq import Groq
 from app.config import GROQ_API_KEY
 
-
 MODEL_NAME = "openai/gpt-oss-20b"
 
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
+
+def _generate_json(prompt: str, temperature: float = 0.3, max_tokens: int = 2000, retries: int = 2):
+    """
+    Shared helper for every AI call that expects JSON back. Retries
+    automatically if Groq returns malformed JSON or a transient error —
+    this fixes the occasional 'json_validate_failed' error that isn't
+    caused by our prompt, just an inconsistent model response.
+    Returns a dict on success, or {"error": "..."} after all retries fail.
+    """
+    if not client:
+        return {"error": "No Groq API key configured"}
+
+    last_error = "Unknown error"
+    for attempt in range(retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            last_error = str(e)
+            print(f"[AI ENGINE] Attempt {attempt + 1} failed: {e}", flush=True)
+            if attempt < retries:
+                time.sleep(1)  # brief pause before retrying
+
+    return {"error": last_error}
 
 
 def analyze_resume_with_ai(resume_text: str):
@@ -35,18 +64,8 @@ Resume text:
 {resume_text[:6000]}
 \"\"\"
 """
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-            max_tokens=2000,
-        )
-        return json.loads(response.choices[0].message.content)
-    except Exception as e:
-        print(f"[AI ENGINE] Groq call failed, falling back to keyword method: {e}", flush=True)
-        return None
+    result = _generate_json(prompt, temperature=0.2, max_tokens=2000)
+    return None if "error" in result else result
 
 
 def analyze_match_with_ai(resume_text: str, candidate_skills: str, job_title: str, job_description: str, required_skills: str):
@@ -83,18 +102,8 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
   "recommendation": "auto_reject" | "needs_review" | "auto_shortlist"
 }}
 """
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.3,
-            max_tokens=2000,
-        )
-        return json.loads(response.choices[0].message.content)
-    except Exception as e:
-        print(f"[AI ENGINE] Match scoring failed, using fallback method: {e}", flush=True)
-        return None
+    result = _generate_json(prompt, temperature=0.3, max_tokens=2000)
+    return None if "error" in result else result
 
 
 def fallback_match_score(candidate_skills: str, required_skills: str):
@@ -126,9 +135,6 @@ def fallback_match_score(candidate_skills: str, required_skills: str):
 
 
 def generate_interview_questions(resume_text: str, job_title: str, job_description: str, ai_reasoning: str):
-    if not client:
-        return {"error": "No Groq API key configured"}
-
     prompt = f"""You are an expert technical interviewer preparing for a candidate interview.
 
 JOB TITLE: {job_title}
@@ -151,25 +157,13 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
   "questions": ["question 1", "question 2", "question 3", "question 4", "question 5"]
 }}
 """
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.4,
-            max_tokens=2000,
-        )
-        result = json.loads(response.choices[0].message.content)
-        return result.get("questions", [])
-    except Exception as e:
-        print(f"[AI ENGINE] Question generation failed: {e}", flush=True)
-        return {"error": str(e)}
+    result = _generate_json(prompt, temperature=0.4, max_tokens=2000)
+    if "error" in result:
+        return {"error": result["error"]}
+    return result.get("questions", [])
 
 
 def draft_interview_email(candidate_name: str, job_title: str, company_name: str, recruiter_name: str):
-    if not client:
-        return {"error": "No Groq API key configured"}
-
     prompt = f"""Write a warm, professional interview invitation email.
 
 Candidate name: {candidate_name}
@@ -189,26 +183,12 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
   "body": "the full email body text, with \\n for line breaks"
 }}
 """
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.5,
-            max_tokens=2000,
-        )
-        return json.loads(response.choices[0].message.content)
-    except Exception as e:
-        print(f"[AI ENGINE] Email drafting failed: {e}", flush=True)
-        return {"error": str(e)}
+    return _generate_json(prompt, temperature=0.5, max_tokens=2000)
 
 
 def draft_status_email(candidate_name: str, job_title: str, company_name: str, recruiter_name: str, email_type: str):
     """Drafts a rejection or shortlist-notice email. email_type must be
     'rejected' or 'shortlisted' (matches the application's status)."""
-    if not client:
-        return {"error": "No Groq API key configured"}
-
     if email_type == "rejected":
         instruction = (
             f"Write a warm, respectful rejection email to {candidate_name} for the "
@@ -234,27 +214,10 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
   "body": "the full email body text, with \\n for line breaks"
 }}
 """
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.5,
-            max_tokens=2000,
-        )
-        return json.loads(response.choices[0].message.content)
-    except Exception as e:
-        print(f"[AI ENGINE] Status email drafting failed: {e}", flush=True)
-        return {"error": str(e)}
+    return _generate_json(prompt, temperature=0.5, max_tokens=2000)
 
 
 def answer_copilot_question(question: str, context_data: str):
-    """Answers a recruiter's free-form question using their real hiring
-    data as context. context_data is a plain-text summary of their jobs
-    and applicants, built by the copilot route before calling this."""
-    if not client:
-        return {"error": "No Groq API key configured"}
-
     prompt = f"""You are a recruiter's AI assistant with access to their real
 hiring data below. Answer their question using ONLY this data — do not
 invent candidates, jobs, or numbers that aren't present. If the data doesn't
@@ -276,31 +239,16 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
   "answer": "your answer here"
 }}
 """
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.3,
-            max_tokens=1000,
-        )
-        result = json.loads(response.choices[0].message.content)
-        return result.get("answer", "")
-    except Exception as e:
-        print(f"[AI ENGINE] Copilot answer failed: {e}", flush=True)
-        return {"error": str(e)}
+    result = _generate_json(prompt, temperature=0.3, max_tokens=1000)
+    if "error" in result:
+        return {"error": result["error"]}
+    return result.get("answer", "")
 
 
-def check_job_description_quality(title: str, description: str, required_skills: str, location: str, job_type: str):
-    """Reviews a job posting before it goes live and suggests improvements.
-    Returns suggestions only — never blocks posting; the recruiter decides.
-    Falls back to a generic 'couldn't analyze' result if the AI call fails,
-    so a hiccup here never stops the recruiter from posting."""
-    if not client:
-        return {"overall_quality": "unknown", "suggestions": []}
-
-    prompt = f"""You are an expert recruiter reviewing a job posting for clarity
-and completeness before it goes live to candidates.
+prompt = f"""You are an expert copy editor reviewing a job posting for
+publication. Your MOST IMPORTANT job is to catch every spelling mistake,
+grammar error, missing punctuation (commas, periods, capitalization), and
+awkward phrasing — do not let a single one slip through.
 
 JOB TITLE: {title}
 DESCRIPTION: {description}
@@ -308,54 +256,86 @@ REQUIRED SKILLS: {required_skills}
 LOCATION: {location or "Not specified"}
 JOB TYPE: {job_type or "Not specified"}
 
-Only flag a genuine problem: something so vague or missing that a real
-candidate could not reasonably decide whether to apply (e.g. no sense of
-what the role actually involves, or a one-word skills list). Do NOT flag
-minor polish items like missing salary, missing perks, missing exact start
-date, or missing degree requirements — those are optional details, not
-blockers, and most real job posts omit them. If the posting gives a candidate
-enough to understand the role and decide to apply, treat it as good even if
-it isn't perfect.
+Go through the DESCRIPTION sentence by sentence. For each sentence, check:
+- Spelling: any misspelled word, even common ones
+- Punctuation: missing or wrong commas, periods, capitalization
+- Grammar: subject-verb agreement, tense consistency, run-on sentences
+- Clarity: awkward or broken phrasing
 
-Return ONLY valid JSON in exactly this shape, no extra commentary, no markdown:
+Then separately check the TITLE and REQUIRED SKILLS for the same issues,
+plus whether they're specific/complete enough for a real job posting.
+
+Do not assume the text is clean — actively look for at least one issue.
+If you truly find nothing wrong after this sentence-by-sentence check,
+only then say so.
+
+For every issue found, quote the EXACT problematic phrase from the text
+and give the specific correction.
+
+Respond with JSON in exactly this shape:
 {{
-  "overall_quality": "good",
-  "suggestions": []
+  "overall_quality": "good or needs_improvement",
+  "suggestions": ["one string per issue found, empty array if none"]
 }}
-
-If there are genuine blocking issues, set "overall_quality" to
-"needs_improvement" instead of "good", and fill "suggestions" with plain
-strings, one per issue. Otherwise leave suggestions as an empty list.
 """
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-            max_tokens=1500,
-        )
-        result = json.loads(response.choices[0].message.content)
-        if "overall_quality" not in result or "suggestions" not in result:
-            raise ValueError("Unexpected response shape from AI")
-        return result
-    except Exception as e:
-        print(f"[AI ENGINE] Job quality check failed, using fallback: {e}", flush=True)
+    """Reviews a job posting before it goes live: checks the title,
+    description, and required skills together for completeness AND
+    writing quality (spelling, grammar, sentence structure)."""
+    if not client:
+        return {"overall_quality": "unknown", "suggestions": []}
+
+    prompt = f"""You are an expert recruiter and copy editor reviewing a job
+posting in JSON format before it goes live to candidates. Review every
+field below carefully — the title, the description, and the required
+skills — as a complete package.
+
+JOB TITLE: {title}
+DESCRIPTION: {description}
+REQUIRED SKILLS: {required_skills}
+LOCATION: {location or "Not specified"}
+JOB TYPE: {job_type or "Not specified"}
+
+Check each field for:
+1. CONTENT: Is the title a real, specific job title (not a placeholder or
+   single vague word)? Does the description actually explain what the
+   person will do day-to-day, and is it long enough to be useful (a single
+   short sentence is usually too thin)? Are the required skills specific
+   and relevant to the title (not just one word, and not mismatched with
+   the role)?
+2. WRITING QUALITY: spelling mistakes, grammar errors, awkward or broken
+   sentence structure, or typos anywhere in the title or description.
+   Quote the specific problematic phrase and suggest the correction.
+
+Be thorough — check the title, description, AND skills list individually,
+not just the description. Only flag genuine issues, but do not skip a field
+just because another field looks fine.
+
+Respond with JSON in exactly this shape:
+{{
+  "overall_quality": "good or needs_improvement",
+  "suggestions": ["one string per issue found, empty array if none"]
+}}
+"""
+    result = _generate_json(prompt, temperature=0.2, max_tokens=1500)
+    if "error" in result:
         return {
             "overall_quality": "unknown",
             "suggestions": [
                 "AI review was temporarily unavailable — you can post as-is, or try checking again in a moment."
             ],
         }
+    if "overall_quality" not in result or "suggestions" not in result:
+        return {
+            "overall_quality": "unknown",
+            "suggestions": ["AI response was in an unexpected format — you can post as-is."],
+        }
+    return result
 
 
 def detect_duplicate_applicant(resume_text: str, other_applications: list):
     """Checks if this resume looks like a near-duplicate of any other
-    applicant's resume for the SAME job. other_applications is a list of
-    dicts: [{"candidate_name": ..., "resume_text": ...}, ...].
-    Returns the matching candidate's name if a likely duplicate is found,
-    otherwise None. Pure text similarity — no AI call needed, so it's
-    instant and free."""
+    applicant's resume for the SAME job. Pure text similarity — no AI
+    call needed, so it's instant and free."""
     if not resume_text:
         return None
 
