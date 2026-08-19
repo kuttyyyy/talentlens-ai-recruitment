@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas
-from app.ai_engine import check_job_description_quality
+from app.ai_engine import check_job_description_quality, generate_job_details
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
@@ -19,6 +19,27 @@ class JobQualityCheckRequest(BaseModel):
     required_skills: str
     location: Optional[str] = None
     job_type: Optional[str] = None
+
+
+class JobGenerateDetailsRequest(BaseModel):
+    title: str
+    location: Optional[str] = None
+    job_type: Optional[str] = None
+
+
+@router.post("/generate-details")
+def generate_details(request: JobGenerateDetailsRequest):
+    """Given just a job title, AI-generates a draft description and
+    required skills. Purely a starting point — recruiter can edit
+    anything before posting."""
+    result = generate_job_details(
+        title=request.title,
+        location=request.location,
+        job_type=request.job_type,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=502, detail="AI generation failed, please try again.")
+    return result
 
 
 @router.post("/check-quality")

@@ -1,7 +1,13 @@
 // PostJob.jsx
 // Lets a logged-in recruiter create a new job posting.
-// Includes an AI "Check Quality" step that reviews the draft before
-// posting — purely advisory, never blocks the recruiter from posting.
+//
+// The "AI" button does one of two things depending on what's filled in:
+//  - Title only (description + skills empty)  -> auto-generates a draft
+//    description and required skills and fills them into the form.
+//  - Description + skills already written      -> runs the original
+//    advisory quality check (spelling/grammar/completeness).
+// Purely advisory either way — never blocks the recruiter from posting,
+// and anything AI-filled can still be edited before submitting.
 
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -24,19 +30,20 @@ function PostJob() {
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // New state for the AI quality check
   const [qualityResult, setQualityResult] = useState(null);
   const [checkingQuality, setCheckingQuality] = useState(false);
   const [qualityError, setQualityError] = useState("");
 
+  const willGenerate = !form.description.trim() && !form.required_skills.trim();
+
   function handleChange(e) {
     setForm({ ...form, [e.target.name]: e.target.value });
-    setQualityResult(null); // clear old feedback once they start editing again
+    setQualityResult(null);
   }
 
   async function handleCheckQuality() {
-    if (!form.title || !form.description || !form.required_skills) {
-      setQualityError("Fill in at least the title, description, and required skills first.");
+    if (!form.title.trim()) {
+      setQualityError("Enter a job title first.");
       return;
     }
 
@@ -45,14 +52,41 @@ function PostJob() {
     setQualityResult(null);
 
     try {
-      const response = await fetch(`${BASE_URL}/jobs/check-quality`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Quality check failed");
-      setQualityResult(data);
+      if (willGenerate) {
+        const response = await fetch(`${BASE_URL}/jobs/generate-details`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: form.title,
+            location: form.location,
+            job_type: form.job_type,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not generate details");
+
+        setForm((prev) => ({
+          ...prev,
+          description: data.description,
+          required_skills: data.required_skills,
+        }));
+      } else {
+        if (!form.description.trim() || !form.required_skills.trim()) {
+          setQualityError(
+            "Fill in both description and required skills, or clear both to auto-generate them."
+          );
+          return;
+        }
+
+        const response = await fetch(`${BASE_URL}/jobs/check-quality`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(form),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Quality check failed");
+        setQualityResult(data);
+      }
     } catch (err) {
       setQualityError(err.message);
     } finally {
@@ -133,6 +167,10 @@ function PostJob() {
               placeholder="e.g. Frontend Developer Intern"
               className="w-full mt-1.5 px-3.5 py-2.5 rounded-lg bg-surface-2 border border-border text-text placeholder:text-muted/60 focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition"
             />
+            <p className="text-xs text-muted/70 mt-1.5">
+              Tip: type just the title and click the AI button below to
+              auto-fill a draft description and required skills.
+            </p>
           </div>
 
           <div>
@@ -192,7 +230,6 @@ function PostJob() {
             </div>
           </div>
 
-          {/* AI Quality Check feedback */}
           {qualityError && (
             <div className="bg-danger/10 border border-danger/40 text-danger text-sm rounded-lg px-3 py-2">
               {qualityError}
@@ -228,7 +265,6 @@ function PostJob() {
             </div>
           )}
 
-          {/* Two buttons: check quality (secondary) and post (primary) */}
           <div className="flex gap-3 mt-2">
             <button
               type="button"
@@ -236,7 +272,13 @@ function PostJob() {
               disabled={checkingQuality}
               className="flex-1 bg-surface-2 hover:bg-border border border-border transition text-text font-medium py-2.5 rounded-lg disabled:opacity-50"
             >
-              {checkingQuality ? "Checking..." : "Check Quality with AI"}
+              {checkingQuality
+                ? willGenerate
+                  ? "Generating..."
+                  : "Checking..."
+                : willGenerate
+                ? "Generate Details with AI"
+                : "Check Quality with AI"}
             </button>
 
             <button

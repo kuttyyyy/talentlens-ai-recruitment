@@ -331,6 +331,40 @@ Respond with JSON in exactly this shape:
     }
 
 
+def generate_job_details(title: str, location: str = None, job_type: str = None):
+    """Given just a job title, generates a draft description and a
+    comma-separated list of required skills. Used by the 'Post Job'
+    form to auto-fill fields when the recruiter has only typed a title."""
+
+    prompt = f"""You are helping a recruiter draft a job posting.
+
+Job title: {title}
+Location: {location or "not specified"}
+Job type: {job_type or "not specified"}
+
+Write:
+1. A clear, professional job description (3-5 sentences) covering typical
+   responsibilities and what a candidate would be expected to do in this role.
+2. A comma-separated list of 6-10 required skills typical for this role,
+   as they would realistically appear on a job posting.
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "description": "...",
+  "required_skills": "skill1, skill2, skill3, ..."
+}}
+"""
+    result = _generate_json(prompt, temperature=0.4, max_tokens=1000)
+
+    if "error" in result:
+        return {"error": result["error"]}
+
+    return {
+        "description": result.get("description", "").strip(),
+        "required_skills": result.get("required_skills", "").strip(),
+    }
+
+
 def detect_duplicate_applicant(resume_text: str, other_applications: list):
     """Checks if this resume looks like a near-duplicate of any other
     applicant's resume for the SAME job. Pure text similarity — no AI
