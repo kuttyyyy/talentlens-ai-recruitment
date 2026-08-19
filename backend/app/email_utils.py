@@ -14,7 +14,7 @@ resend.api_key = RESEND_API_KEY
 
 # Resend's shared test sender — works instantly with no domain setup,
 # but can only send to the email address you signed up to Resend with.
-FROM_ADDRESS = "TalentLens <noreply@prajweldomain.com>"
+FROM_ADDRESS = "TalentLens <onboarding@resend.dev>"
 
 
 def send_email(to_address: str, subject: str, body: str) -> bool:
