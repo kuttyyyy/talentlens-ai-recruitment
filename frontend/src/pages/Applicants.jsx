@@ -25,6 +25,7 @@ function Applicants() {
   const [editForm, setEditForm] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [closingJobId, setClosingJobId] = useState(null);
+  const [deletingJobId, setDeletingJobId] = useState(null);
   const menuRef = useRef(null);
 
   useEffect(() => {
@@ -146,6 +147,33 @@ function Applicants() {
     }
   }
 
+  async function deleteJob(job) {
+    if (
+      !window.confirm(
+        `Permanently delete "${job.title}"? This will also delete every application, interview question, and email tied to this job. This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    setDeletingJobId(job.id);
+    setOpenMenuJobId(null);
+    try {
+      const res = await fetch(`${BASE_URL}/jobs/${job.id}/permanent`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "Could not delete job");
+      }
+      setMyJobs((prev) => prev.filter((j) => j.id !== job.id));
+      if (selectedJob?.id === job.id) {
+        setSelectedJob(null);
+      }
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setDeletingJobId(null);
+    }
+  }
+
   function scoreColor(score) {
     if (score >= 70) return "text-success border-success/40 bg-success/10";
     if (score >= 40) return "text-gold border-gold/40 bg-gold/10";
@@ -187,11 +215,14 @@ function Applicants() {
             {myJobs.map((job) => {
               const isEditing = editingJobId === job.id;
               const isMenuOpen = openMenuJobId === job.id;
+              const isDeleting = deletingJobId === job.id;
 
               return (
                 <div
                   key={job.id}
-                  className="bg-surface border border-border rounded-xl p-5 hover:border-gold/40 transition relative"
+                  className={`bg-surface border border-border rounded-xl p-5 hover:border-gold/40 transition relative ${
+                    isDeleting ? "opacity-50 pointer-events-none" : ""
+                  }`}
                 >
                   {/* 3-dot menu */}
                   <div className="absolute top-4 right-4" ref={isMenuOpen ? menuRef : null}>
@@ -214,11 +245,18 @@ function Applicants() {
                           <button
                             onClick={() => closeJob(job)}
                             disabled={closingJobId === job.id}
-                            className="w-full text-left text-sm px-3 py-2 text-danger hover:bg-danger/10 transition disabled:opacity-50"
+                            className="w-full text-left text-sm px-3 py-2 text-gold hover:bg-gold/10 transition disabled:opacity-50"
                           >
                             {closingJobId === job.id ? "Closing..." : "Close Job"}
                           </button>
                         )}
+                        <button
+                          onClick={() => deleteJob(job)}
+                          disabled={isDeleting}
+                          className="w-full text-left text-sm px-3 py-2 text-danger hover:bg-danger/10 transition disabled:opacity-50 border-t border-border"
+                        >
+                          {isDeleting ? "Deleting..." : "Delete"}
+                        </button>
                       </div>
                     )}
                   </div>

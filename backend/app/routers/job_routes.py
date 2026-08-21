@@ -141,3 +141,33 @@ def close_job(job_id: int, db: Session = Depends(get_db)):
     job.status = "closed"
     db.commit()
     return {"message": "Job closed successfully"}
+
+
+@router.delete("/{job_id}/permanent")
+def delete_job_permanently(job_id: int, db: Session = Depends(get_db)):
+    """Permanently deletes a job posting AND every application submitted
+    to it (plus their interview questions and email drafts/logs). This
+    cannot be undone — unlike the DELETE /{job_id} endpoint above, which
+    just marks the job 'closed' and keeps everything for historical reports."""
+    job = db.query(models.Job).filter(models.Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    application_ids = [
+        a.id for a in db.query(models.Application).filter(models.Application.job_id == job_id).all()
+    ]
+
+    if application_ids:
+        db.query(models.InterviewQuestion).filter(
+            models.InterviewQuestion.application_id.in_(application_ids)
+        ).delete(synchronize_session=False)
+        db.query(models.EmailLog).filter(
+            models.EmailLog.application_id.in_(application_ids)
+        ).delete(synchronize_session=False)
+        db.query(models.Application).filter(
+            models.Application.job_id == job_id
+        ).delete(synchronize_session=False)
+
+    db.delete(job)
+    db.commit()
+    return {"message": "Job and all its applications deleted permanently"}

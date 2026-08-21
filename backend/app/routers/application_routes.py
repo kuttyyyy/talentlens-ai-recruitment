@@ -252,3 +252,24 @@ def accept_ai_suggestion(application_id: int, db: Session = Depends(get_db)):
         "message": f"AI suggestion accepted — status set to '{new_status}'",
         "status": application.status,
     }
+
+
+@router.delete("/{application_id}")
+def delete_application(application_id: int, db: Session = Depends(get_db)):
+    """A candidate withdraws/deletes their own application. Permanently
+    removes the application plus any interview questions or email
+    drafts/logs tied to it."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    db.query(models.InterviewQuestion).filter(
+        models.InterviewQuestion.application_id == application_id
+    ).delete(synchronize_session=False)
+    db.query(models.EmailLog).filter(
+        models.EmailLog.application_id == application_id
+    ).delete(synchronize_session=False)
+
+    db.delete(application)
+    db.commit()
+    return {"message": "Application deleted successfully"}
