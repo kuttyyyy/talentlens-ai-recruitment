@@ -14,6 +14,9 @@ import Applicants from "./pages/Applicants";
 import CandidateDetail from "./pages/CandidateDetail";
 import RecruiterDashboard from "./pages/RecruiterDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
+import Assessments from "./pages/Assessments";
+import NewAssessment from "./pages/NewAssessment";
+import AssessmentDetail from "./pages/AssessmentDetail";
 
 function App() {
   return (
@@ -31,6 +34,9 @@ function App() {
         <Route path="/applicants/:applicationId" element={<CandidateDetail />} />
         <Route path="/reports" element={<RecruiterDashboard />} />
         <Route path="/admin" element={<AdminDashboard />} />
+        <Route path="/assessments" element={<Assessments />} />
+        <Route path="/assessments/new" element={<NewAssessment />} />
+        <Route path="/assessments/:assessmentId" element={<AssessmentDetail />} />
       </Routes>
     </BrowserRouter>
   );
