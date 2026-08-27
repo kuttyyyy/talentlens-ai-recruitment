@@ -11,6 +11,7 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 // (Jobs, Applicants, etc.). role: which user role sees this link.
 const NAV_ITEMS = [
   { label: "Dashboard", path: "/dashboard", roles: ["candidate", "recruiter", "admin"] },
+  { label: "My Profile", path: "/profile", roles: ["candidate"] },
   { label: "Upload Resume", path: "/upload-resume", roles: ["candidate"] },
   { label: "Browse Jobs", path: "/browse-jobs", roles: ["candidate"] },
   { label: "My Applications", path: "/my-applications", roles: ["candidate"] },

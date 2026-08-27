@@ -69,3 +69,118 @@ class JobOut(BaseModel):
 class StatusUpdate(BaseModel):
     """Used when a recruiter changes an applicant's status."""
     status: str  # "applied", "shortlisted", "interview_scheduled", "rejected", "hired"
+
+
+# ---------------------------------------------------------------------------
+# JD-Based Agentic AI Assessment System
+# ---------------------------------------------------------------------------
+
+class AssessmentCreate(BaseModel):
+    """Data required to start a new assessment: a title and the JD text.
+    job_id is optional — set it if this assessment is built from an
+    existing job posting, leave it out for a standalone pasted-in JD."""
+    title: str
+    jd_text: str
+    job_id: int | None = None
+
+
+class AssessmentTestOut(BaseModel):
+    """One of the 3 tests belonging to an assessment."""
+    id: int
+    assessment_id: int
+    test_number: int
+    test_type: str
+    title: str
+    instructions: str | None
+    duration_minutes: int
+    content: dict           # parsed from content_json for the API response
+    ai_allowed: str | None
+    allowed_tools: str | None
+    status: str
+    created_at: datetime
+    updated_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+class AssessmentTestUpdate(BaseModel):
+    """Data a recruiter can edit on a generated test before approving it."""
+    title: str
+    instructions: str | None = None
+    duration_minutes: int
+    content: dict
+    ai_allowed: str | None = None      # "allowed" | "not_allowed" (Test 3 only)
+    allowed_tools: str | None = None
+
+
+class AssessmentOut(BaseModel):
+    """Full assessment detail: JD, extracted requirements, and its tests."""
+    id: int
+    recruiter_id: int
+    job_id: int | None
+    title: str
+    jd_text: str
+    status: str
+    extracted_technical_skills: str | None
+    extracted_soft_skills: str | None
+    extracted_qualifications: str | None
+    extracted_experience: str | None
+    extracted_responsibilities: str | None
+    analysis_summary: str | None
+    created_at: datetime
+    updated_at: datetime | None
+    tests: list[AssessmentTestOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+class AssessmentSummaryOut(BaseModel):
+    """Lightweight version used for the assessments list page."""
+    id: int
+    title: str
+    status: str
+    job_id: int | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ---------------------------------------------------------------------------
+# Candidate Registration & Profile
+# ---------------------------------------------------------------------------
+
+class CandidateProfileUpdate(BaseModel):
+    """Everything a candidate can edit about their own profile."""
+    phone: str | None = None
+    linkedin_url: str | None = None
+    portfolio_url: str | None = None
+    skills: list[str] = []
+    education: list[dict] = []        # [{degree, institution, year}]
+    experience: list[dict] = []       # [{company, role, duration, description}]
+    internships: list[dict] = []      # [{company, role, duration, description}]
+    certifications: list[dict] = []   # [{name, issuer, year}]
+    projects: list[dict] = []         # [{title, description, link}]
+
+
+class CandidateProfileOut(BaseModel):
+    """Full profile detail shown on the candidate's own profile page."""
+    user_id: int
+    full_name: str
+    email: str
+    phone: str | None
+    linkedin_url: str | None
+    portfolio_url: str | None
+    skills: list[str]
+    education: list[dict]
+    experience: list[dict]
+    internships: list[dict]
+    certifications: list[dict]
+    projects: list[dict]
+    has_resume: bool
+    extracted_skills: str | None
+    extracted_education: str | None
+    extracted_experience: str | None
+    profile_completion: int  # 0-100

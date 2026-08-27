@@ -25,12 +25,27 @@ class User(Base):
 
 
 class CandidateProfile(Base):
-    """Extra details that only candidates need — resume, extracted AI info."""
+    """Extra details that only candidates need — self-entered profile info,
+    plus the resume file and whatever the AI extracted from it."""
     __tablename__ = "candidate_profiles"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True)
     phone = Column(String, nullable=True)
+    linkedin_url = Column(String, nullable=True)
+    portfolio_url = Column(String, nullable=True)
+
+    # Candidate-entered profile fields (Module 2). Stored as JSON text so
+    # each one can hold a flexible list of entries (e.g. multiple degrees,
+    # multiple jobs) without needing separate tables for an MVP.
+    skills = Column(Text, nullable=True)              # comma-separated, self-reported
+    education_json = Column(Text, nullable=True)       # [{degree, institution, year}]
+    experience_json = Column(Text, nullable=True)      # [{company, role, duration, description}]
+    internships_json = Column(Text, nullable=True)      # [{company, role, duration, description}]
+    certifications_json = Column(Text, nullable=True)   # [{name, issuer, year}]
+    projects_json = Column(Text, nullable=True)         # [{title, description, link}]
+
+    # Resume upload + AI extraction (already existed — untouched)
     resume_file_path = Column(String, nullable=True)      # where the uploaded file is saved
     resume_text = Column(Text, nullable=True)              # raw text extracted from resume
     extracted_skills = Column(Text, nullable=True)         # AI-found skills (comma-separated)
@@ -89,6 +104,71 @@ class InterviewQuestion(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     application = relationship("Application", back_populates="interview_questions")
+
+
+class Assessment(Base):
+    """A JD-Based Agentic AI Assessment container: one job description,
+    its AI-extracted requirements, and the 3 AI-generated tests built
+    from it. Can optionally link back to an existing Job posting, or
+    stand alone with its own pasted-in JD text."""
+    __tablename__ = "assessments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    recruiter_id = Column(Integer, ForeignKey("users.id"))
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)  # optional link to a real job posting
+    title = Column(String, nullable=False)
+    jd_text = Column(Text, nullable=False)
+
+    # status moves forward: draft -> analyzed -> tests_generated -> approved
+    status = Column(String, default="draft")
+
+    # JD Analysis Agent output (comma-separated lists stored as text, same pattern as Job.required_skills)
+    extracted_technical_skills = Column(Text, nullable=True)
+    extracted_soft_skills = Column(Text, nullable=True)
+    extracted_qualifications = Column(Text, nullable=True)
+    extracted_experience = Column(Text, nullable=True)
+    extracted_responsibilities = Column(Text, nullable=True)
+    analysis_summary = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    recruiter = relationship("User")
+    job = relationship("Job")
+    tests = relationship(
+        "AssessmentTest",
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+        order_by="AssessmentTest.test_number",
+    )
+
+
+class AssessmentTest(Base):
+    """One of the 3 AI-generated tests belonging to an Assessment.
+    content_json holds the full test body (questions/scenarios/task
+    spec) as a JSON string — its shape depends on test_type, so we
+    don't force it into rigid columns."""
+    __tablename__ = "assessment_tests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    assessment_id = Column(Integer, ForeignKey("assessments.id"))
+    test_number = Column(Integer, nullable=False)  # 1, 2, or 3
+    test_type = Column(String, nullable=False)  # knowledge_reasoning | situational_judgment | practical_simulation
+    title = Column(String, nullable=False)
+    instructions = Column(Text, nullable=True)
+    duration_minutes = Column(Integer, default=30)
+    content_json = Column(Text, nullable=False)  # JSON-encoded questions/scenarios/task spec
+
+    # Mainly used by Test 3 (Practical Job Simulation) — the recruiter's
+    # explicit call on whether AI tools may be used, per the spec.
+    ai_allowed = Column(String, nullable=True)      # "allowed" | "not_allowed" | None (n/a for tests 1 & 2)
+    allowed_tools = Column(Text, nullable=True)      # comma-separated
+
+    status = Column(String, default="draft")  # draft | approved
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    assessment = relationship("Assessment", back_populates="tests")
 
 
 class EmailLog(Base):

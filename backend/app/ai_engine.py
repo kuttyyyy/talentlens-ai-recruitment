@@ -382,3 +382,158 @@ def detect_duplicate_applicant(resume_text: str, other_applications: list):
             return other.get("candidate_name")
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# JD-Based Agentic AI Assessment System
+# ---------------------------------------------------------------------------
+
+def analyze_jd_with_ai(jd_text: str):
+    """JD Analysis Agent — reads a job description and extracts the
+    skills, qualifications, experience, and responsibilities it implies.
+    This is the ONLY input the rest of the pipeline uses; nothing here
+    should invent requirements the JD doesn't actually support."""
+    if not client:
+        return {"error": "No Groq API key configured"}
+
+    prompt = f"""You are an expert technical recruiter analyzing a job description
+before building candidate assessments from it.
+
+Read the job description below CAREFULLY and extract, using ONLY what is
+stated or clearly implied in the text — never invent requirements the JD
+doesn't support:
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "technical_skills": ["skill1", "skill2", ...],
+  "soft_skills": ["skill1", "skill2", ...],
+  "qualifications": ["e.g. Bachelor's degree in Computer Science", ...],
+  "experience_required": "1-2 sentences describing the experience level required (years, seniority, domain).",
+  "responsibilities": ["responsibility 1", "responsibility 2", ...],
+  "summary": "2-3 sentence plain-language summary of this role, written the way a recruiter would describe it to a hiring manager."
+}}
+
+JOB DESCRIPTION:
+\"\"\"
+{jd_text[:8000]}
+\"\"\"
+"""
+    result = _generate_json(prompt, temperature=0.2, max_tokens=2000)
+    return result
+
+
+def generate_assessment_tests_with_ai(jd_text: str, analysis: dict):
+    """Assessment Agent — builds exactly 3 job-specific tests based ONLY
+    on the JD and its extracted requirements:
+      Test 1: Knowledge & Reasoning (MCQs, numerical, technical, situational)
+      Test 2: Job Situational Judgment (workplace scenarios)
+      Test 3: Practical Job Simulation (a real task based on the JD)
+
+    Every question/scenario carries its own point value; points within
+    Test 1 and within Test 2 should sum to 100, and Test 3's evaluation
+    criteria weights should sum to 100 — so each test is independently
+    scoreable out of 100 later, by the Evaluation Agent."""
+    if not client:
+        return {"error": "No Groq API key configured"}
+
+    prompt = f"""You are an expert assessment designer creating a candidate
+testing pipeline for ONE specific job. Base every question and task ONLY on
+the job description and extracted requirements below — do not test unrelated
+skills.
+
+JOB DESCRIPTION:
+\"\"\"
+{jd_text[:6000]}
+\"\"\"
+
+EXTRACTED REQUIREMENTS:
+{json.dumps(analysis)[:3000]}
+
+Design exactly 3 tests:
+
+TEST 1 — Knowledge & Reasoning: a mix of 8-10 questions covering MCQs,
+numerical/quantitative questions, technical/job-related questions, and
+situational judgment questions, all tied to the specific skills in this JD.
+Each question's "points" must be an integer, and all points in test_1 must
+sum to exactly 100.
+
+TEST 2 — Job Situational Judgment: 5-6 realistic workplace scenarios specific
+to this role, each with a question and 4 multiple-choice response options
+testing decision-making and professional judgment. Points across all
+scenarios must sum to exactly 100.
+
+TEST 3 — Practical Job Simulation: ONE realistic hands-on task based
+directly on this JD (e.g. an Excel/finance analysis, a coding/SQL/data task,
+an HR case study — whatever actually fits this role). Provide clear
+deliverable instructions and 4-6 evaluation criteria with integer weights
+that sum to exactly 100. Also suggest whether AI tool use should be allowed
+for this task and, if so, which tools — the recruiter will make the final
+call.
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "test_1": {{
+    "title": "short title for this test",
+    "instructions": "1-2 sentences telling the candidate how to approach this test",
+    "duration_minutes": 30,
+    "questions": [
+      {{
+        "type": "mcq",
+        "question": "...",
+        "options": ["A", "B", "C", "D"],
+        "correct_answer": "A",
+        "explanation": "why this is correct, used later for scoring",
+        "points": 10
+      }},
+      {{
+        "type": "numerical",
+        "question": "...",
+        "correct_answer": "42",
+        "explanation": "...",
+        "points": 10
+      }},
+      {{
+        "type": "technical",
+        "question": "open-ended technical question",
+        "expected_answer_points": ["key point 1", "key point 2"],
+        "points": 10
+      }},
+      {{
+        "type": "situational",
+        "question": "short job-related situational question",
+        "expected_answer_points": ["key point 1", "key point 2"],
+        "points": 10
+      }}
+    ]
+  }},
+  "test_2": {{
+    "title": "short title for this test",
+    "instructions": "1-2 sentences telling the candidate how to approach this test",
+    "duration_minutes": 25,
+    "scenarios": [
+      {{
+        "scenario": "realistic workplace situation for this role",
+        "question": "What would you do?",
+        "options": ["A", "B", "C", "D"],
+        "best_option": "B",
+        "explanation": "why this is the best response, used later for scoring",
+        "points": 17
+      }}
+    ]
+  }},
+  "test_3": {{
+    "title": "short title for this practical task",
+    "task_description": "the realistic task itself, in detail",
+    "deliverable_instructions": "exactly what the candidate must submit and in what form",
+    "duration_minutes": 60,
+    "suggested_ai_policy": "allowed" or "not_allowed",
+    "suggested_allowed_tools": ["tool1", "tool2"],
+    "evaluation_criteria": [
+      {{"criterion": "Accuracy", "weight": 30}},
+      {{"criterion": "...", "weight": 70}}
+    ]
+  }}
+}}
+"""
+    result = _generate_json(prompt, temperature=0.4, max_tokens=6000)
+    return result
