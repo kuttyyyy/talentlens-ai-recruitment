@@ -3,6 +3,7 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 from app.database import engine, Base
 from app import models
 from app.routers import (
@@ -21,6 +22,46 @@ from app.routers import (
 app = FastAPI(title="AI Recruitment System API")
 
 Base.metadata.create_all(bind=engine)
+
+
+# ==========================================================
+# AUTO-MIGRATION: automatically adds any missing columns
+# Runs on every startup. Safe to leave in permanently.
+# This means future modules that add new columns to existing
+# tables will no longer crash production with
+# "column does not exist" errors — it self-heals on deploy.
+# ==========================================================
+def auto_migrate(engine, Base):
+    inspector = inspect(engine)
+    existing_tables = inspector.get_table_names()
+
+    with engine.connect() as conn:
+        for table_name, table in Base.metadata.tables.items():
+            if table_name not in existing_tables:
+                # Brand-new table — create_all() above already handles this
+                continue
+
+            existing_columns = {
+                col["name"] for col in inspector.get_columns(table_name)
+            }
+
+            for column in table.columns:
+                if column.name in existing_columns:
+                    continue
+
+                col_type = column.type.compile(dialect=engine.dialect)
+                ddl = f'ALTER TABLE "{table_name}" ADD COLUMN "{column.name}" {col_type}'
+
+                try:
+                    conn.execute(text(ddl))
+                    conn.commit()
+                    print(f"[auto_migrate] Added missing column: {table_name}.{column.name}")
+                except Exception as e:
+                    print(f"[auto_migrate] Skipped {table_name}.{column.name}: {e}")
+
+
+auto_migrate(engine, Base)
+
 
 app.add_middleware(
     CORSMiddleware,
