@@ -214,6 +214,90 @@ function CandidateDetail() {
         </div>
       </div>
 
+      {/* Module 3 -- CV Analysis & CV-JD Match evidence */}
+      {(application.cv_analysis || application.jd_match) && (
+        <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-text font-display text-lg">CV-JD Match Detail</h2>
+            {application.jd_match?.alignment_score !== undefined && application.jd_match?.alignment_score !== null && (
+              <span className={`text-sm font-semibold px-3 py-1 rounded-full border ${scoreColor(application.jd_match.alignment_score)}`}>
+                {application.jd_match.alignment_score}% alignment
+              </span>
+            )}
+          </div>
+
+          {application.jd_match?.summary && (
+            <p className="text-muted text-sm leading-relaxed mb-4">{application.jd_match.summary}</p>
+          )}
+
+          {application.jd_match?.requirements?.length > 0 && (
+            <div className="overflow-hidden border border-border rounded-lg mb-4">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-muted text-xs uppercase tracking-wide bg-ink/40">
+                    <th className="text-left px-3 py-2">JD Requirement</th>
+                    <th className="text-left px-3 py-2">CV Evidence</th>
+                    <th className="text-left px-3 py-2">Match</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {application.jd_match.requirements.map((r, i) => (
+                    <tr key={i} className="border-b border-border last:border-0">
+                      <td className="px-3 py-2 text-text align-top">{r.requirement}</td>
+                      <td className="px-3 py-2 text-muted align-top">{r.evidence}</td>
+                      <td className="px-3 py-2 align-top">
+                        <span
+                          className={`text-xs font-medium px-2 py-0.5 rounded-full border whitespace-nowrap ${
+                            r.match === "Strong"
+                              ? "text-success bg-success/10 border-success/30"
+                              : r.match === "Partial"
+                              ? "text-gold bg-gold/10 border-gold/30"
+                              : r.match === "Missing"
+                              ? "text-danger bg-danger/10 border-danger/30"
+                              : "text-signal bg-signal/10 border-signal/30"
+                          }`}
+                        >
+                          {r.match}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {application.cv_analysis && (
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wide mb-1">Education</p>
+                <p className="text-text">{application.cv_analysis.education || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wide mb-1">Experience</p>
+                <p className="text-text">{application.cv_analysis.experience || "—"}</p>
+              </div>
+              {application.cv_analysis.projects?.length > 0 && (
+                <div className="col-span-2">
+                  <p className="text-xs text-muted uppercase tracking-wide mb-1">Projects</p>
+                  <ul className="list-disc list-inside text-text">
+                    {application.cv_analysis.projects.map((p, i) => <li key={i}>{p}</li>)}
+                  </ul>
+                </div>
+              )}
+              {application.cv_analysis.certifications?.length > 0 && (
+                <div className="col-span-2">
+                  <p className="text-xs text-muted uppercase tracking-wide mb-1">Certifications</p>
+                  <ul className="list-disc list-inside text-text">
+                    {application.cv_analysis.certifications.map((c, i) => <li key={i}>{c}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Interview questions */}
       <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl mb-6">
         <div className="flex items-center justify-between mb-3">

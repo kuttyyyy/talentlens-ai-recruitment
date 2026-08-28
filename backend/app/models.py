@@ -86,6 +86,12 @@ class Application(Base):
     ai_recommendation = Column(String, nullable=True)   # "auto_reject", "needs_review", or "auto_shortlist"
     possible_duplicate_of = Column(String, nullable=True)  # candidate name, if resume looks like a near-duplicate
     hired_at = Column(DateTime(timezone=True), nullable=True)  # set automatically when status becomes "hired"
+
+    # Module 3 — AI CV Analysis & CV-JD Matching (richer, evidence-based
+    # detail alongside the quick match_score/ai_reasoning above)
+    cv_analysis_json = Column(Text, nullable=True)   # {education, skills, experience, internships, certifications, projects, achievements}
+    jd_match_json = Column(Text, nullable=True)       # {requirements: [{requirement, evidence, match}], alignment_score, strong_matches, partial_matches, missing_requirements, summary}
+
     status = Column(String, default="applied")          # applied, shortlisted, interview_scheduled, rejected, hired
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -169,6 +175,32 @@ class AssessmentTest(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     assessment = relationship("Assessment", back_populates="tests")
+
+
+class TestAttempt(Base):
+    """A candidate's attempt at one of an approved assessment's tests
+    (Module 4). Tied to their Application, since that's what connects a
+    candidate to a specific job's approved assessment."""
+    __tablename__ = "test_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"))
+    assessment_test_id = Column(Integer, ForeignKey("assessment_tests.id"))
+
+    answers_json = Column(Text, nullable=True)   # candidate's saved answers, shape depends on test_type
+    status = Column(String, default="not_started")  # not_started | in_progress | submitted
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    submitted_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Lightweight instrumentation captured now so the Integrity Agent
+    # (a later module) doesn't need to touch this test-taking UI again —
+    # nothing reads or flags this data yet.
+    integrity_events_json = Column(Text, nullable=True)  # {tab_switches, blur_count, ...}
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    application = relationship("Application")
+    assessment_test = relationship("AssessmentTest")
 
 
 class EmailLog(Base):

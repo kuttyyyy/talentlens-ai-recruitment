@@ -184,3 +184,18 @@ class CandidateProfileOut(BaseModel):
     extracted_education: str | None
     extracted_experience: str | None
     profile_completion: int  # 0-100
+
+# ---------------------------------------------------------------------------
+# Module 4 -- Candidate Assessment System (test-taking)
+# ---------------------------------------------------------------------------
+
+class TestAttemptSave(BaseModel):
+    """A candidate saving progress on a test, without submitting."""
+    answers: dict
+    integrity_events: dict | None = None
+
+
+class TestAttemptSubmit(BaseModel):
+    """A candidate's final submission of a test."""
+    answers: dict
+    integrity_events: dict | None = None

@@ -3,11 +3,12 @@
 # AI-ranked applicants for their jobs. This is where the AI matching
 # engine actually runs.
 
+import json
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas
-from app.ai_engine import analyze_match_with_ai, fallback_match_score, detect_duplicate_applicant
+from app.ai_engine import analyze_match_with_ai, fallback_match_score, detect_duplicate_applicant, analyze_cv_jd_match
 
 router = APIRouter(prefix="/applications", tags=["Applications"])
 
@@ -74,6 +75,29 @@ def apply_to_job(job_id: int, candidate_id: int, db: Session = Depends(get_db)):
 
     duplicate_of = detect_duplicate_applicant(profile.resume_text, other_data)
 
+    # Module 3 -- CV Analysis Agent + Matching Agent: a richer, evidence-based
+    # requirement-by-requirement comparison, stored alongside the quick
+    # match_score above. Best-effort -- if the AI call fails, the
+    # application still goes through with just the basic score.
+    cv_analysis_json = None
+    jd_match_json = None
+    match_details = analyze_cv_jd_match(
+        resume_text=profile.resume_text,
+        job_title=job.title,
+        job_description=job.description,
+        required_skills=job.required_skills,
+    )
+    if match_details:
+        cv_analysis_json = json.dumps(match_details.get("cv_analysis", {}))
+        jd_match_json = json.dumps({
+            "requirements": match_details.get("requirements", []),
+            "alignment_score": match_details.get("alignment_score"),
+            "strong_matches": match_details.get("strong_matches", []),
+            "partial_matches": match_details.get("partial_matches", []),
+            "missing_requirements": match_details.get("missing_requirements", []),
+            "summary": match_details.get("summary", ""),
+        })
+
     new_application = models.Application(
         job_id=job_id,
         candidate_id=candidate_id,
@@ -81,6 +105,8 @@ def apply_to_job(job_id: int, candidate_id: int, db: Session = Depends(get_db)):
         ai_reasoning=reasoning,
         ai_recommendation=recommendation,
         possible_duplicate_of=duplicate_of,
+        cv_analysis_json=cv_analysis_json,
+        jd_match_json=jd_match_json,
         status="applied",
     )
     db.add(new_application)
@@ -186,6 +212,8 @@ def get_application_detail(application_id: int, db: Session = Depends(get_db)):
         "ai_reasoning": application.ai_reasoning,
         "ai_recommendation": application.ai_recommendation,
         "possible_duplicate_of": application.possible_duplicate_of,
+        "cv_analysis": json.loads(application.cv_analysis_json) if application.cv_analysis_json else None,
+        "jd_match": json.loads(application.jd_match_json) if application.jd_match_json else None,
         "status": application.status,
         "applied_at": application.applied_at,
         "interview_questions": [q.question_text for q in questions],

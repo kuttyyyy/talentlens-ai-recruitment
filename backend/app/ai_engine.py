@@ -537,3 +537,71 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
 """
     result = _generate_json(prompt, temperature=0.4, max_tokens=6000)
     return result
+
+# ---------------------------------------------------------------------------
+# Module 3 -- AI CV Analysis & CV-JD Matching
+# ---------------------------------------------------------------------------
+
+def analyze_cv_jd_match(resume_text: str, job_title: str, job_description: str, required_skills: str):
+    """CV Analysis Agent + Matching Agent, combined into one call.
+
+    Extracts a fuller picture of the candidate's CV (education, skills,
+    experience, internships, certifications, projects, achievements), then
+    compares it point-by-point against the JD, producing an evidence-based
+    requirement table -- never a bare pass/fail score. The recruiter sees
+    exactly where each conclusion came from."""
+    if not client:
+        return None
+
+    prompt = f"""You are an expert technical recruiter doing two things at once
+for one candidate applying to one job:
+
+1. Read their resume and extract a structured CV analysis.
+2. Compare that CV against this specific job's requirements, requirement by
+   requirement, citing the actual evidence found (or not found) in the resume.
+
+JOB TITLE: {job_title}
+JOB DESCRIPTION: {job_description}
+REQUIRED SKILLS: {required_skills}
+
+CANDIDATE'S RESUME:
+\"\"\"
+{resume_text[:6000]}
+\"\"\"
+
+Be honest and fair. Do not invent evidence that isn't in the resume. Do not
+base any judgment on protected or irrelevant personal characteristics (age,
+gender, name, ethnicity, etc.) -- only job-relevant qualifications, skills,
+and experience.
+
+For each requirement's "match" field, use exactly one of: "Strong", "Partial",
+"Review", "Missing" -- matching these meanings:
+- "Strong": clear, direct evidence in the resume
+- "Partial": some related evidence, but not a full/direct match
+- "Review": ambiguous or unclear -- a recruiter should look closer
+- "Missing": no evidence found in the resume at all
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "cv_analysis": {{
+    "education": "1-2 sentence summary of their education",
+    "skills": ["skill1", "skill2"],
+    "experience": "1-2 sentence summary of their work experience",
+    "internships": ["internship 1 summary", "internship 2 summary"],
+    "certifications": ["certification 1", "certification 2"],
+    "projects": ["project 1 summary", "project 2 summary"],
+    "achievements": ["notable achievement 1", "notable achievement 2"]
+  }},
+  "requirements": [
+    {{"requirement": "e.g. Excel", "evidence": "Found -- mentions building financial models in Excel", "match": "Strong"}},
+    {{"requirement": "e.g. 3+ years experience", "evidence": "Resume shows 1 year of relevant experience", "match": "Partial"}}
+  ],
+  "alignment_score": 78,
+  "strong_matches": ["requirement A", "requirement B"],
+  "partial_matches": ["requirement C"],
+  "missing_requirements": ["requirement D"],
+  "summary": "2-3 sentence overview of overall fit, for a recruiter, explaining where the score came from."
+}}
+"""
+    result = _generate_json(prompt, temperature=0.2, max_tokens=3000)
+    return None if "error" in result else result

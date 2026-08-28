@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { label: "Upload Resume", path: "/upload-resume", roles: ["candidate"] },
   { label: "Browse Jobs", path: "/browse-jobs", roles: ["candidate"] },
   { label: "My Applications", path: "/my-applications", roles: ["candidate"] },
+  { label: "My Assessments", path: "/my-assessments", roles: ["candidate"] },
   { label: "Post a Job", path: "/post-job", roles: ["recruiter"] },
   { label: "JD Assessments", path: "/assessments", roles: ["recruiter"] },
   { label: "Applicants", path: "/applicants", roles: ["recruiter"] },

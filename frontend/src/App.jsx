@@ -8,6 +8,8 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import ResumeUpload from "./pages/ResumeUpload";
 import CandidateProfile from "./pages/CandidateProfile";
+import MyAssessments from "./pages/MyAssessments";
+import TakeTest from "./pages/TakeTest";
 import PostJob from "./pages/PostJob";
 import BrowseJobs from "./pages/BrowseJobs";
 import MyApplications from "./pages/MyApplications";
@@ -29,6 +31,8 @@ function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/upload-resume" element={<ResumeUpload />} />
         <Route path="/profile" element={<CandidateProfile />} />
+        <Route path="/my-assessments" element={<MyAssessments />} />
+        <Route path="/test/:applicationId/:testId" element={<TakeTest />} />
         <Route path="/post-job" element={<PostJob />} />
         <Route path="/browse-jobs" element={<BrowseJobs />} />
         <Route path="/my-applications" element={<MyApplications />} />
