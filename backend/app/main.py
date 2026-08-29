@@ -17,6 +17,7 @@ from app.routers import (
     copilot_routes,
     assessment_routes,
     test_attempt_routes,
+    evaluation_routes,
 )
 
 app = FastAPI(title="AI Recruitment System API")
@@ -29,7 +30,7 @@ Base.metadata.create_all(bind=engine)
 # Runs on every startup. Safe to leave in permanently.
 # This means future modules that add new columns to existing
 # tables will no longer crash production with
-# "column does not exist" errors — it self-heals on deploy.
+# "column does not exist" errors -- it self-heals on deploy.
 # ==========================================================
 def auto_migrate(engine, Base):
     inspector = inspect(engine)
@@ -38,7 +39,7 @@ def auto_migrate(engine, Base):
     with engine.connect() as conn:
         for table_name, table in Base.metadata.tables.items():
             if table_name not in existing_tables:
-                # Brand-new table — create_all() above already handles this
+                # Brand-new table -- create_all() above already handles this
                 continue
 
             existing_columns = {
@@ -82,6 +83,7 @@ app.include_router(admin_routes.router)
 app.include_router(copilot_routes.router)
 app.include_router(assessment_routes.router)
 app.include_router(test_attempt_routes.router)
+app.include_router(evaluation_routes.router)
 
 
 @app.get("/")

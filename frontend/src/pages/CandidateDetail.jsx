@@ -13,9 +13,19 @@ const STATUS_OPTIONS = ["applied", "shortlisted", "interview_scheduled", "reject
 function CandidateDetail() {
   const { applicationId } = useParams();
   const navigate = useNavigate();
+  const user = JSON.parse(localStorage.getItem("user"));
 
   const [application, setApplication] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Modules 6 & 7 -- integrity + evaluation report
+  const [evalReport, setEvalReport] = useState(null);
+  const [evalLoading, setEvalLoading] = useState(true);
+  const [evaluating, setEvaluating] = useState(false);
+  const [evalError, setEvalError] = useState("");
+  const [editingWeights, setEditingWeights] = useState(false);
+  const [weightDraft, setWeightDraft] = useState({ test1_weight: 30, test2_weight: 25, test3_weight: 45 });
+  const [savingWeights, setSavingWeights] = useState(false);
 
   const [questions, setQuestions] = useState([]);
   const [generatingQuestions, setGeneratingQuestions] = useState(false);
@@ -32,6 +42,7 @@ function CandidateDetail() {
 
   useEffect(() => {
     loadApplication();
+    loadEvaluationReport();
   }, [applicationId]);
 
   function loadApplication() {
@@ -43,6 +54,73 @@ function CandidateDetail() {
         setQuestions(data.interview_questions || []);
       })
       .finally(() => setLoading(false));
+  }
+
+  async function loadEvaluationReport() {
+    setEvalLoading(true);
+    try {
+      const res = await fetch(`${BASE_URL}/evaluations/application/${applicationId}?recruiter_id=${user.id}`);
+      const data = await res.json();
+      if (res.ok) {
+        setEvalReport(data);
+        if (data.weights) {
+          setWeightDraft({
+            test1_weight: data.weights["1"] ?? 30,
+            test2_weight: data.weights["2"] ?? 25,
+            test3_weight: data.weights["3"] ?? 45,
+          });
+        }
+      }
+    } catch {
+      // Non-fatal -- the rest of the page still works without this
+    } finally {
+      setEvalLoading(false);
+    }
+  }
+
+  async function runEvaluation() {
+    setEvaluating(true);
+    setEvalError("");
+    try {
+      const res = await fetch(`${BASE_URL}/evaluations/application/${applicationId}/evaluate?recruiter_id=${user.id}`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Evaluation failed");
+      await loadEvaluationReport();
+    } catch (err) {
+      setEvalError(err.message);
+    } finally {
+      setEvaluating(false);
+    }
+  }
+
+  async function saveWeights() {
+    const total = weightDraft.test1_weight + weightDraft.test2_weight + weightDraft.test3_weight;
+    if (total !== 100) {
+      setEvalError(`Weights must sum to 100 (currently ${total})`);
+      return;
+    }
+    setSavingWeights(true);
+    setEvalError("");
+    try {
+      const res = await fetch(
+        `${BASE_URL}/evaluations/assessment/${evalReport.assessment_id}/weights?recruiter_id=${user.id}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(weightDraft),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to save weights");
+      setEditingWeights(false);
+      await loadEvaluationReport();
+    } catch (err) {
+      setEvalError(err.message);
+    } finally {
+      setSavingWeights(false);
+    }
   }
 
   async function updateStatus(newStatus) {
@@ -297,6 +375,183 @@ function CandidateDetail() {
           )}
         </div>
       )}
+
+      {/* Modules 6 & 7 -- Assessment Results: scores, evidence, integrity */}
+      <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-text font-display text-lg">Assessment Results</h2>
+          <button
+            onClick={runEvaluation}
+            disabled={evaluating}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-gold hover:bg-gold-dim transition text-ink disabled:opacity-50"
+          >
+            {evaluating ? "Evaluating..." : "Run Evaluation"}
+          </button>
+        </div>
+
+        {evalError && (
+          <div className="bg-danger/10 border border-danger/40 text-danger text-sm rounded-lg px-3 py-2 mb-3">
+            {evalError}
+          </div>
+        )}
+
+        {evalLoading ? (
+          <p className="text-muted text-sm">Loading...</p>
+        ) : !evalReport || evalReport.tests.length === 0 ? (
+          <p className="text-muted text-sm">
+            No approved assessment tests found for this job, or the candidate hasn't taken them yet.
+          </p>
+        ) : (
+          <>
+            {/* Overall score + recommendation */}
+            <div className="flex items-center justify-between border-b border-border pb-4 mb-4">
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wide">Overall Score</p>
+                <p className="font-display text-3xl text-text">
+                  {evalReport.overall_score !== null ? `${evalReport.overall_score} / 100` : "—"}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-muted uppercase tracking-wide">Recommendation</p>
+                <p className="text-gold text-sm font-medium">AI Assessment → Recruiter Review Required</p>
+              </div>
+            </div>
+
+            {/* Weight editor */}
+            <div className="mb-4">
+              {editingWeights ? (
+                <div className="flex items-end gap-3">
+                  {["test1_weight", "test2_weight", "test3_weight"].map((key, i) => (
+                    <div key={key}>
+                      <label className="text-[10px] text-muted uppercase">Test {i + 1} %</label>
+                      <input
+                        type="number"
+                        value={weightDraft[key]}
+                        onChange={(e) => setWeightDraft((prev) => ({ ...prev, [key]: Number(e.target.value) }))}
+                        className="w-16 px-2 py-1 rounded-md bg-surface-2 border border-border text-text text-sm"
+                      />
+                    </div>
+                  ))}
+                  <button
+                    onClick={saveWeights}
+                    disabled={savingWeights}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-gold hover:bg-gold-dim transition text-ink disabled:opacity-50"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setEditingWeights(false)}
+                    className="text-xs text-muted hover:text-text px-2 py-1.5"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => setEditingWeights(true)} className="text-xs text-gold hover:text-gold-dim">
+                  Weights: Test 1 {evalReport.weights?.["1"]}% · Test 2 {evalReport.weights?.["2"]}% · Test 3{" "}
+                  {evalReport.weights?.["3"]}% (edit)
+                </button>
+              )}
+            </div>
+
+            {/* Per-test cards */}
+            <div className="flex flex-col gap-4">
+              {evalReport.tests.map((t) => (
+                <div key={t.test_id} className="border border-border rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-text text-sm font-medium">
+                      Test {t.test_number} — {t.title} <span className="text-muted text-xs">({t.weight}%)</span>
+                    </p>
+                    <div className="flex items-center gap-2">
+                      {t.score !== null && t.score !== undefined && (
+                        <span className={`text-sm font-semibold px-2.5 py-0.5 rounded-full border ${scoreColor(t.score)}`}>
+                          {t.score} / 100
+                        </span>
+                      )}
+                      <span className="text-xs text-muted capitalize">{t.status.replace("_", " ")}</span>
+                    </div>
+                  </div>
+
+                  {t.evaluation && (
+                    <div className="text-sm mt-2 flex flex-col gap-2">
+                      {t.evaluation.strengths?.length > 0 && (
+                        <p><span className="text-success">Strengths:</span> {t.evaluation.strengths.join("; ")}</p>
+                      )}
+                      {t.evaluation.weaknesses?.length > 0 && (
+                        <p><span className="text-gold">Areas to explore:</span> {t.evaluation.weaknesses.join("; ")}</p>
+                      )}
+                      {t.evaluation.skills_demonstrated?.length > 0 && (
+                        <p><span className="text-muted">Skills demonstrated:</span> {t.evaluation.skills_demonstrated.join(", ")}</p>
+                      )}
+                      {t.evaluation.ai_collaboration_assessment?.summary && (
+                        <p className="border-l-2 border-gold pl-2">
+                          <span className="text-gold">AI collaboration:</span> {t.evaluation.ai_collaboration_assessment.summary}
+                        </p>
+                      )}
+
+                      {t.evaluation.breakdown?.length > 0 && (
+                        <details className="mt-1">
+                          <summary className="text-xs text-muted cursor-pointer hover:text-text">
+                            View evidence ({t.evaluation.breakdown.length} item{t.evaluation.breakdown.length !== 1 ? "s" : ""})
+                          </summary>
+                          <div className="flex flex-col gap-2 mt-2">
+                            {t.evaluation.breakdown.map((b, i) => (
+                              <div key={i} className="bg-ink/40 rounded-md p-2 text-xs">
+                                <p className="text-text font-medium">{b.question || b.criterion}</p>
+                                {b.candidate_answer !== undefined && (
+                                  <p className="text-muted mt-0.5">Answer: {String(b.candidate_answer)}</p>
+                                )}
+                                <p className="text-muted mt-0.5">
+                                  {b.points_earned !== undefined
+                                    ? `${b.points_earned} / ${b.points_possible} points`
+                                    : b.score !== undefined
+                                    ? `${b.score} / 100 (weight ${b.weight}%)`
+                                    : null}
+                                  {b.evidence ? ` — ${b.evidence}` : ""}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Integrity flags */}
+                  {t.integrity_report?.flags?.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-border">
+                      <p className="text-xs text-danger font-medium mb-1.5">
+                        ⚠ Potential integrity concern — recruiter review required
+                      </p>
+                      <div className="flex flex-col gap-1.5">
+                        {t.integrity_report.flags.map((f, i) => (
+                          <div key={i} className="text-xs flex items-start gap-2">
+                            <span
+                              className={`px-1.5 py-0.5 rounded-full border whitespace-nowrap ${
+                                f.severity === "high"
+                                  ? "text-danger bg-danger/10 border-danger/30"
+                                  : f.severity === "medium"
+                                  ? "text-gold bg-gold/10 border-gold/30"
+                                  : "text-muted bg-muted/10 border-border"
+                              }`}
+                            >
+                              {f.severity}
+                            </span>
+                            <span className="text-muted">
+                              <span className="text-text">{f.event}:</span> {f.evidence}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-muted/60 mt-1.5">{t.integrity_report.disclaimer}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
 
       {/* Interview questions */}
       <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl mb-6">

@@ -610,3 +610,113 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
 """
     result = _generate_json(prompt, temperature=0.2, max_tokens=3000)
     return None if "error" in result else result
+
+
+# ---------------------------------------------------------------------------
+# Module 7 -- AI Evaluation & Scoring
+# ---------------------------------------------------------------------------
+
+def evaluate_open_ended_items(test_type: str, items_to_grade: list, deterministic_summary: str):
+    """Grades the free-text items in Test 1 or Test 2 that can't be scored
+    by exact match (technical/situational answers, or -- rarely -- an
+    open-ended scenario response), and produces an evidence-based summary
+    for the whole test. MCQ/numerical items are already scored
+    deterministically before this is ever called."""
+    if not client:
+        return None
+
+    prompt = f"""You are grading part of a job candidate's {test_type.replace('_', ' ')} test.
+
+Some items in this test were already scored automatically (exact-match
+questions). Here is a summary of how the candidate did on those, for context:
+{deterministic_summary}
+
+Now grade ONLY the following free-text items. For each, compare the
+candidate's answer against what a strong answer would cover, and give a
+score from 0.0 to 1.0 (fraction of full credit) with a one-sentence reason.
+Be fair -- partial credit for partially-correct or incomplete answers is
+expected and normal, not everything is 0 or 1.
+
+ITEMS TO GRADE:
+{json.dumps(items_to_grade)}
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "graded_items": [
+    {{"index": 0, "score_fraction": 0.8, "evidence": "why this score, referencing what they actually wrote"}}
+  ],
+  "strengths": ["strength 1", "strength 2"],
+  "weaknesses": ["area to explore 1", "area to explore 2"],
+  "skills_demonstrated": ["skill 1", "skill 2"]
+}}
+"""
+    result = _generate_json(prompt, temperature=0.2, max_tokens=2000)
+    return None if "error" in result else result
+
+
+def evaluate_practical_submission(task_description: str, deliverable_instructions: str, evaluation_criteria: list, submission: dict):
+    """Evaluates a candidate's practical task submission against the
+    recruiter's evaluation criteria. If the candidate used AI, this
+    explicitly asks 'can they work effectively WITH AI' -- prompt quality,
+    verification, corrections -- never just 'did they use AI'."""
+    if not client:
+        return None
+
+    ai_used = submission.get("ai_used", False)
+    ai_context = ""
+    if ai_used:
+        ai_context = f"""
+The candidate reports using an AI tool. Evaluate their AI COLLABORATION
+skill specifically -- do NOT penalize AI use itself. Consider:
+- Prompt quality: was what they asked the AI clear and well-scoped?
+- Their own reasoning: did they show independent thinking, not just relaying AI output?
+- Verification: did they check the AI's output for correctness?
+- Corrections: did they catch and fix anything wrong with what the AI gave them?
+- Final output: is the end result accurate and job-relevant regardless of how it was produced?
+
+Their reported AI prompts: {submission.get('ai_prompts_used', '(not provided)')}
+What the AI gave them: {submission.get('ai_output_notes', '(not provided)')}
+How they verified/corrected it: {submission.get('verification_notes', '(not provided)')}
+"""
+    else:
+        ai_context = "\nThe candidate did not report using an AI tool for this task."
+
+    prompt = f"""You are evaluating a candidate's practical job simulation submission.
+
+TASK GIVEN TO THE CANDIDATE:
+{task_description}
+
+DELIVERABLE INSTRUCTIONS:
+{deliverable_instructions}
+
+CANDIDATE'S SUBMISSION:
+{submission.get('submission_text', '(no submission text provided)')}
+
+FILES THE CANDIDATE SAYS THEY SUBMITTED:
+{submission.get('files_submitted', '(none described)')}
+{ai_context}
+
+Score the submission against EACH of these evaluation criteria (weights sum to 100):
+{json.dumps(evaluation_criteria)}
+
+For each criterion, give a score from 0-100 and cite what in the submission
+supports that score. Be honest -- a criterion with no supporting evidence in
+the submission should score low, not be guessed generously.
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "criteria_scores": [
+    {{"criterion": "Accuracy", "weight": 30, "score": 75, "evidence": "..."}}
+  ],
+  "ai_collaboration_assessment": {{
+    "prompt_quality": "1 sentence assessment, or null if AI wasn't used",
+    "verification_quality": "1 sentence assessment, or null if AI wasn't used",
+    "summary": "1-2 sentence overall assessment of how effectively they worked with AI, or null if not used"
+  }},
+  "strengths": ["strength 1", "strength 2"],
+  "weaknesses": ["area to explore 1", "area to explore 2"],
+  "skills_demonstrated": ["skill 1", "skill 2"]
+}}
+"""
+    result = _generate_json(prompt, temperature=0.2, max_tokens=2500)
+    return None if "error" in result else result

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas
+from app.integrity_agent import generate_integrity_report
 
 router = APIRouter(prefix="/test-attempts", tags=["Candidate Assessments (Module 4)"])
 
@@ -209,6 +210,8 @@ def save_attempt(attempt_id: int, update: schemas.TestAttemptSave, db: Session =
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
     if attempt.status == "submitted":
+        attempt.post_submission_attempts = (attempt.post_submission_attempts or 0) + 1
+        db.commit()
         raise HTTPException(status_code=400, detail="This test has already been submitted and can no longer be edited")
 
     attempt.answers_json = json.dumps(update.answers)
@@ -240,3 +243,63 @@ def submit_attempt(attempt_id: int, submission: schemas.TestAttemptSubmit, db: S
 
     db.commit()
     return {"message": "Test submitted successfully", "status": "submitted", "submitted_at": attempt.submitted_at}
+
+
+@router.get("/application/{application_id}/recruiter-view")
+def get_attempts_for_recruiter(application_id: int, recruiter_id: int, db: Session = Depends(get_db)):
+    """Everything a recruiter needs to review one candidate's test
+    attempts for a job: their answers, evaluation (once run), and an
+    integrity report per test. Only the recruiter who owns this job can
+    view it."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if application.job.recruiter_id != recruiter_id:
+        raise HTTPException(status_code=403, detail="This application doesn't belong to one of your jobs")
+
+    assessment = (
+        db.query(models.Assessment)
+        .filter(models.Assessment.job_id == application.job_id, models.Assessment.status == "approved")
+        .first()
+    )
+    if not assessment:
+        return {"tests": []}
+
+    results = []
+    for test in assessment.tests:
+        attempt = (
+            db.query(models.TestAttempt)
+            .filter(
+                models.TestAttempt.application_id == application_id,
+                models.TestAttempt.assessment_test_id == test.id,
+            )
+            .first()
+        )
+
+        try:
+            answers = json.loads(attempt.answers_json) if attempt and attempt.answers_json else {}
+        except (json.JSONDecodeError, TypeError):
+            answers = {}
+
+        try:
+            evaluation = json.loads(attempt.evaluation_json) if attempt and attempt.evaluation_json else None
+        except (json.JSONDecodeError, TypeError):
+            evaluation = None
+
+        integrity_report = generate_integrity_report(attempt) if attempt else {"flags": [], "disclaimer": None}
+
+        results.append({
+            "test_id": test.id,
+            "test_number": test.test_number,
+            "test_type": test.test_type,
+            "title": test.title,
+            "status": attempt.status if attempt else "not_started",
+            "started_at": attempt.started_at if attempt else None,
+            "submitted_at": attempt.submitted_at if attempt else None,
+            "answers": answers,
+            "evaluation_score": attempt.evaluation_score if attempt else None,
+            "evaluation": evaluation,
+            "integrity_report": integrity_report,
+        })
+
+    return {"tests": results}

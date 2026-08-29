@@ -203,3 +203,14 @@ class TestAttemptSubmit(BaseModel):
     """A candidate's final submission of a test."""
     answers: dict
     integrity_events: dict | None = None
+
+
+# ---------------------------------------------------------------------------
+# Module 7 -- AI Evaluation & Scoring
+# ---------------------------------------------------------------------------
+
+class EvaluationWeightsUpdate(BaseModel):
+    """Recruiter-set weights for the overall score. Must sum to 100."""
+    test1_weight: int
+    test2_weight: int
+    test3_weight: int

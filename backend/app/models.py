@@ -136,6 +136,12 @@ class Assessment(Base):
     extracted_responsibilities = Column(Text, nullable=True)
     analysis_summary = Column(Text, nullable=True)
 
+    # Module 7 -- recruiter-configurable weights for the overall score,
+    # must sum to 100. Defaults match the spec's suggested split.
+    test1_weight = Column(Integer, default=30)
+    test2_weight = Column(Integer, default=25)
+    test3_weight = Column(Integer, default=45)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -195,9 +201,15 @@ class TestAttempt(Base):
     submitted_at = Column(DateTime(timezone=True), nullable=True)
 
     # Lightweight instrumentation captured now so the Integrity Agent
-    # (a later module) doesn't need to touch this test-taking UI again —
+    # (a later module) doesn't need to touch this test-taking UI again --
     # nothing reads or flags this data yet.
     integrity_events_json = Column(Text, nullable=True)  # {tab_switches, blur_count, ...}
+    post_submission_attempts = Column(Integer, default=0)  # times an edit/save was tried after submission
+
+    # Module 7 -- AI Evaluation & Scoring
+    evaluation_score = Column(Float, nullable=True)     # 0-100 for this test
+    evaluation_json = Column(Text, nullable=True)        # full evidence-based breakdown
+    evaluated_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
