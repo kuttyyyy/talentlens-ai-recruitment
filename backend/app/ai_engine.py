@@ -467,8 +467,9 @@ directly on this JD (e.g. an Excel/finance analysis, a coding/SQL/data task,
 an HR case study — whatever actually fits this role). Provide clear
 deliverable instructions and 4-6 evaluation criteria with integer weights
 that sum to exactly 100. Also suggest whether AI tool use should be allowed
-for this task and, if so, which tools — the recruiter will make the final
-call.
+for this task and, if so, which tools; whether internet access is needed;
+and what software/format the submission should be in — the recruiter will
+review and can change every one of these before approving.
 
 Return ONLY valid JSON in exactly this shape, no extra commentary:
 {{
@@ -528,6 +529,10 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
     "duration_minutes": 60,
     "suggested_ai_policy": "allowed" or "not_allowed",
     "suggested_allowed_tools": ["tool1", "tool2"],
+    "suggested_internet_policy": "allowed" or "not_allowed",
+    "required_software": ["e.g. Microsoft Excel", "e.g. VS Code"],
+    "submission_format": "e.g. a .xlsx file with formulas visible, or a text writeup with code blocks",
+    "required_files": ["e.g. completed_model.xlsx", "e.g. a short summary paragraph"],
     "evaluation_criteria": [
       {{"criterion": "Accuracy", "weight": 30}},
       {{"criterion": "...", "weight": 70}}

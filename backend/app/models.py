@@ -2,7 +2,7 @@
 # This file defines all our database tables as Python classes.
 # Each class = one table. Each attribute = one column.
 
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Float
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Float, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -166,9 +166,11 @@ class AssessmentTest(Base):
     content_json = Column(Text, nullable=False)  # JSON-encoded questions/scenarios/task spec
 
     # Mainly used by Test 3 (Practical Job Simulation) — the recruiter's
-    # explicit call on whether AI tools may be used, per the spec.
+    # explicit calls on the rules of the practical task, per the spec.
     ai_allowed = Column(String, nullable=True)      # "allowed" | "not_allowed" | None (n/a for tests 1 & 2)
     allowed_tools = Column(Text, nullable=True)      # comma-separated
+    internet_allowed = Column(String, nullable=True)      # "allowed" | "not_allowed" | None (n/a for tests 1 & 2)
+    proof_of_work_required = Column(Boolean, default=False)  # candidate must confirm/describe proof of work
 
     status = Column(String, default="draft")  # draft | approved
     created_at = Column(DateTime(timezone=True), server_default=func.now())

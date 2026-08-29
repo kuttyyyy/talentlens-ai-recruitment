@@ -27,7 +27,6 @@ function formatTime(totalSeconds) {
 function TakeTest() {
   const { applicationId, testId } = useParams();
   const user = JSON.parse(localStorage.getItem("user"));
-
   const [attempt, setAttempt] = useState(null); // raw response from start
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -43,10 +42,34 @@ function TakeTest() {
   // Practical task submission text (test 3 only)
   const [practicalSubmission, setPracticalSubmission] = useState("");
   const [aiUsed, setAiUsed] = useState(false);
+  const [aiPromptsUsed, setAiPromptsUsed] = useState("");
+  const [aiOutputNotes, setAiOutputNotes] = useState("");
+  const [verificationNotes, setVerificationNotes] = useState("");
+  const [filesSubmitted, setFilesSubmitted] = useState("");
+
+  const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(true);
 
   // Integrity instrumentation -- captured now, surfaced by a later module
   const integrityRef = useRef({ tab_switches: 0, blur_count: 0 });
   const timerRef = useRef(null);
+
+  // Load the test's rules up-front (duration, AI/internet policy, required
+  // software, etc.) WITHOUT starting the clock, so the consent screen can
+  // show the real details instead of placeholders.
+  useEffect(() => {
+    async function loadPreview() {
+      try {
+        const data = await apiRequest(`/test-attempts/preview/${testId}`);
+        setPreview(data);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setPreviewLoading(false);
+      }
+    }
+    loadPreview();
+  }, [testId]);
 
   async function beginAttempt() {
     setLoading(true);
@@ -60,6 +83,10 @@ function TakeTest() {
       setAnswers(data.answers || {});
       setPracticalSubmission(data.answers?.submission_text || "");
       setAiUsed(!!data.answers?.ai_used);
+      setAiPromptsUsed(data.answers?.ai_prompts_used || "");
+      setAiOutputNotes(data.answers?.ai_output_notes || "");
+      setVerificationNotes(data.answers?.verification_notes || "");
+      setFilesSubmitted(data.answers?.files_submitted || "");
       if (data.status === "submitted") {
         setSubmitted(true);
       } else {
@@ -111,7 +138,14 @@ function TakeTest() {
 
   function currentAnswers() {
     if (attempt?.test_type === "practical_simulation") {
-      return { submission_text: practicalSubmission, ai_used: aiUsed };
+      return {
+        submission_text: practicalSubmission,
+        ai_used: aiUsed,
+        ai_prompts_used: aiUsed ? aiPromptsUsed : "",
+        ai_output_notes: aiUsed ? aiOutputNotes : "",
+        verification_notes: aiUsed ? verificationNotes : "",
+        files_submitted: filesSubmitted,
+      };
     }
     return answers;
   }
@@ -160,11 +194,13 @@ function TakeTest() {
 
   // --- Intro / consent screen (before starting) ---
   if (!started && !submitted) {
+    const isPracticalPreview = preview?.test_type === "practical_simulation";
     return (
       <AppShell>
         <Link to="/my-assessments" className="text-muted text-sm hover:text-text">← My Assessments</Link>
         <p className="font-mono text-xs text-gold tracking-widest mt-2 mb-2">BEFORE YOU START</p>
-        <h1 className="font-display text-3xl text-text mb-6">Test Instructions</h1>
+        <h1 className="font-display text-3xl text-text mb-1">{preview?.title || "Test Instructions"}</h1>
+        {preview?.instructions && <p className="text-muted text-sm mb-6 max-w-xl">{preview.instructions}</p>}
 
         {error && (
           <div className="bg-danger/10 border border-danger/40 text-danger text-sm rounded-lg px-3 py-2 mb-4 max-w-xl">
@@ -172,46 +208,93 @@ function TakeTest() {
           </div>
         )}
 
-        <div className="bg-surface border border-border rounded-xl p-6 max-w-xl flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <p className="text-xs text-muted uppercase tracking-wide">Duration</p>
-              <p className="text-text">You'll see the exact duration once you start</p>
+        {previewLoading ? (
+          <p className="text-muted text-sm">Loading test details...</p>
+        ) : (
+          <div className="bg-surface border border-border rounded-xl p-6 max-w-xl flex flex-col gap-4">
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wide">Duration</p>
+                <p className="text-text">{preview?.duration_minutes} minutes</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wide">Submission</p>
+                <p className="text-text">Auto-submits when time runs out</p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs text-muted uppercase tracking-wide">Submission</p>
-              <p className="text-text">Auto-submits when time runs out</p>
+
+            {isPracticalPreview && (
+              <div className="grid grid-cols-2 gap-4 text-sm border-t border-border pt-4">
+                <div>
+                  <p className="text-xs text-muted uppercase tracking-wide">AI Tools</p>
+                  <p className="text-text">{preview.ai_allowed === "allowed" ? "Allowed" : "Not Allowed"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted uppercase tracking-wide">Internet Access</p>
+                  <p className="text-text">{preview.internet_allowed === "allowed" ? "Allowed" : "Not Allowed"}</p>
+                </div>
+                {preview.ai_allowed === "allowed" && preview.allowed_tools && (
+                  <div className="col-span-2">
+                    <p className="text-xs text-muted uppercase tracking-wide">Allowed Tools</p>
+                    <p className="text-text">{preview.allowed_tools}</p>
+                  </div>
+                )}
+                {preview.required_software?.length > 0 && (
+                  <div className="col-span-2">
+                    <p className="text-xs text-muted uppercase tracking-wide">Required Software</p>
+                    <p className="text-text">{preview.required_software.join(", ")}</p>
+                  </div>
+                )}
+                {preview.submission_format && (
+                  <div className="col-span-2">
+                    <p className="text-xs text-muted uppercase tracking-wide">Submission Format</p>
+                    <p className="text-text">{preview.submission_format}</p>
+                  </div>
+                )}
+                {preview.required_files?.length > 0 && (
+                  <div className="col-span-2">
+                    <p className="text-xs text-muted uppercase tracking-wide">Files to Submit</p>
+                    <p className="text-text">{preview.required_files.join(", ")}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="border-t border-border pt-4">
+              <p className="text-xs text-muted uppercase tracking-wide mb-1">Privacy & Consent</p>
+              <p className="text-muted text-sm leading-relaxed">
+                Your answers, along with basic activity signals (like leaving this page or losing
+                focus), will be visible to the recruiter for this job when they review your
+                submission. This is used only to support their hiring decision -- it does not
+                automatically accept or reject you, and the recruiter makes the final call.
+              </p>
+              {isPracticalPreview && preview?.proof_of_work_required && (
+                <p className="text-muted text-sm leading-relaxed mt-2">
+                  This task asks you to briefly describe your process as proof of work. No
+                  screen or video recording is captured in this prototype.
+                </p>
+              )}
             </div>
+
+            <label className="flex items-start gap-2 text-sm text-text mt-2">
+              <input
+                type="checkbox"
+                checked={consentChecked}
+                onChange={(e) => setConsentChecked(e.target.checked)}
+                className="mt-1"
+              />
+              I understand and agree to start this test.
+            </label>
+
+            <button
+              onClick={beginAttempt}
+              disabled={!consentChecked || loading}
+              className="bg-gold hover:bg-gold-dim transition text-ink font-semibold py-2.5 rounded-lg disabled:opacity-40 mt-2"
+            >
+              {loading ? "Starting..." : "Start Test"}
+            </button>
           </div>
-
-          <div className="border-t border-border pt-4">
-            <p className="text-xs text-muted uppercase tracking-wide mb-1">Privacy & Consent</p>
-            <p className="text-muted text-sm leading-relaxed">
-              Your answers, along with basic activity signals (like leaving this page or losing
-              focus), will be visible to the recruiter for this job when they review your
-              submission. This is used only to support their hiring decision -- it does not
-              automatically accept or reject you, and the recruiter makes the final call.
-            </p>
-          </div>
-
-          <label className="flex items-start gap-2 text-sm text-text mt-2">
-            <input
-              type="checkbox"
-              checked={consentChecked}
-              onChange={(e) => setConsentChecked(e.target.checked)}
-              className="mt-1"
-            />
-            I understand and agree to start this test.
-          </label>
-
-          <button
-            onClick={beginAttempt}
-            disabled={!consentChecked || loading}
-            className="bg-gold hover:bg-gold-dim transition text-ink font-semibold py-2.5 rounded-lg disabled:opacity-40 mt-2"
-          >
-            {loading ? "Starting..." : "Start Test"}
-          </button>
-        </div>
+        )}
       </AppShell>
     );
   }
@@ -280,6 +363,22 @@ function TakeTest() {
               <p className="text-xs text-muted uppercase tracking-wide">Allowed Tools</p>
               <p className="text-text">{attempt.allowed_tools || "—"}</p>
             </div>
+            <div>
+              <p className="text-xs text-muted uppercase tracking-wide">Internet Access</p>
+              <p className="text-text">{attempt.internet_allowed === "allowed" ? "Allowed" : "Not Allowed"}</p>
+            </div>
+            {attempt.content?.required_software?.length > 0 && (
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wide">Required Software</p>
+                <p className="text-text">{attempt.content.required_software.join(", ")}</p>
+              </div>
+            )}
+            {attempt.content?.submission_format && (
+              <div className="col-span-2">
+                <p className="text-xs text-muted uppercase tracking-wide">Submission Format</p>
+                <p className="text-text">{attempt.content.submission_format}</p>
+              </div>
+            )}
           </div>
 
           <div>
@@ -294,11 +393,79 @@ function TakeTest() {
             />
           </div>
 
+          {attempt.content?.required_files?.length > 0 && (
+            <div>
+              <p className="text-xs text-muted uppercase tracking-wide mb-1">
+                Files to Submit ({attempt.content.required_files.join(", ")})
+              </p>
+              <textarea
+                rows={2}
+                value={filesSubmitted}
+                onChange={(e) => setFilesSubmitted(e.target.value)}
+                onBlur={saveProgress}
+                placeholder="Since file upload isn't available in this prototype, briefly describe each file's contents here..."
+                className="w-full px-3.5 py-2.5 rounded-lg bg-surface-2 border border-border text-text placeholder:text-muted/60 focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition text-sm resize-none"
+              />
+            </div>
+          )}
+
           {attempt.ai_allowed === "allowed" && (
-            <label className="flex items-center gap-2 text-sm text-text">
-              <input type="checkbox" checked={aiUsed} onChange={(e) => setAiUsed(e.target.checked)} />
-              I used an AI tool while completing this task
-            </label>
+            <div className="border-t border-border pt-4 flex flex-col gap-3">
+              <label className="flex items-center gap-2 text-sm text-text">
+                <input
+                  type="checkbox"
+                  checked={aiUsed}
+                  onChange={(e) => {
+                    setAiUsed(e.target.checked);
+                    saveProgress();
+                  }}
+                />
+                I used an AI tool while completing this task
+              </label>
+
+              {aiUsed && (
+                <>
+                  <p className="text-xs text-muted/70 -mt-1">
+                    This isn't scored on whether you used AI — it's about how effectively you used it.
+                  </p>
+                  <div>
+                    <p className="text-xs text-muted uppercase tracking-wide mb-1">Prompts You Used</p>
+                    <textarea
+                      rows={3}
+                      value={aiPromptsUsed}
+                      onChange={(e) => setAiPromptsUsed(e.target.value)}
+                      onBlur={saveProgress}
+                      placeholder="What did you ask the AI tool?"
+                      className="w-full px-3.5 py-2.5 rounded-lg bg-surface-2 border border-border text-text placeholder:text-muted/60 focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition text-sm resize-none"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted uppercase tracking-wide mb-1">What the AI Gave You</p>
+                    <textarea
+                      rows={3}
+                      value={aiOutputNotes}
+                      onChange={(e) => setAiOutputNotes(e.target.value)}
+                      onBlur={saveProgress}
+                      placeholder="Summarize the AI's output"
+                      className="w-full px-3.5 py-2.5 rounded-lg bg-surface-2 border border-border text-text placeholder:text-muted/60 focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition text-sm resize-none"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted uppercase tracking-wide mb-1">
+                      How You Verified or Corrected It
+                    </p>
+                    <textarea
+                      rows={3}
+                      value={verificationNotes}
+                      onChange={(e) => setVerificationNotes(e.target.value)}
+                      onBlur={saveProgress}
+                      placeholder="What did you check, fix, or change before using it in your final answer?"
+                      className="w-full px-3.5 py-2.5 rounded-lg bg-surface-2 border border-border text-text placeholder:text-muted/60 focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition text-sm resize-none"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
           )}
 
           <button

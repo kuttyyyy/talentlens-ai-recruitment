@@ -43,6 +43,8 @@ def _test_to_out(test: models.AssessmentTest) -> schemas.AssessmentTestOut:
         content=content,
         ai_allowed=test.ai_allowed,
         allowed_tools=test.allowed_tools,
+        internet_allowed=test.internet_allowed,
+        proof_of_work_required=bool(test.proof_of_work_required),
         status=test.status,
         created_at=test.created_at,
         updated_at=test.updated_at,
@@ -198,19 +200,25 @@ def generate_tests(assessment_id: int, db: Session = Depends(get_db)):
                 "task_description": payload.get("task_description", ""),
                 "deliverable_instructions": payload.get("deliverable_instructions", ""),
                 "evaluation_criteria": payload.get("evaluation_criteria", []),
+                "required_software": payload.get("required_software", []),
+                "submission_format": payload.get("submission_format", ""),
+                "required_files": payload.get("required_files", []),
             }
             ai_allowed = payload.get("suggested_ai_policy") or "not_allowed"
             allowed_tools = ", ".join(payload.get("suggested_allowed_tools", []) or [])
+            internet_allowed = payload.get("suggested_internet_policy") or "not_allowed"
             instructions = payload.get("deliverable_instructions", "")
         elif test_number == 2:
             content = {"scenarios": payload.get("scenarios", [])}
             ai_allowed = None
             allowed_tools = None
+            internet_allowed = None
             instructions = payload.get("instructions", "")
         else:
             content = {"questions": payload.get("questions", [])}
             ai_allowed = None
             allowed_tools = None
+            internet_allowed = None
             instructions = payload.get("instructions", "")
 
         new_test = models.AssessmentTest(
@@ -223,6 +231,8 @@ def generate_tests(assessment_id: int, db: Session = Depends(get_db)):
             content_json=json.dumps(content),
             ai_allowed=ai_allowed,
             allowed_tools=allowed_tools,
+            internet_allowed=internet_allowed,
+            proof_of_work_required=False,  # recruiter opts in explicitly -- AI shouldn't decide this
             status="draft",
         )
         db.add(new_test)
@@ -249,6 +259,8 @@ def update_test(assessment_id: int, test_id: int, update: schemas.AssessmentTest
     test.content_json = json.dumps(update.content)
     test.ai_allowed = update.ai_allowed
     test.allowed_tools = update.allowed_tools
+    test.internet_allowed = update.internet_allowed
+    test.proof_of_work_required = update.proof_of_work_required
     test.status = "draft"  # editing invalidates a prior approval
 
     db.commit()

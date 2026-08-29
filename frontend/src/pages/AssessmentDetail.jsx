@@ -322,8 +322,21 @@ function SituationalJudgmentEditor({ content, onChange }) {
 // ---------------------------------------------------------------------------
 // Test 3 — Practical Job Simulation editor
 // ---------------------------------------------------------------------------
-function PracticalSimulationEditor({ content, aiAllowed, allowedTools, onContentChange, onAiAllowedChange, onAllowedToolsChange }) {
+function PracticalSimulationEditor({
+  content,
+  aiAllowed,
+  allowedTools,
+  internetAllowed,
+  proofOfWorkRequired,
+  onContentChange,
+  onAiAllowedChange,
+  onAllowedToolsChange,
+  onInternetAllowedChange,
+  onProofOfWorkRequiredChange,
+}) {
   const criteria = content.evaluation_criteria || [];
+  const requiredSoftware = content.required_software || [];
+  const requiredFiles = content.required_files || [];
 
   function updateCriterion(i, patch) {
     const next = criteria.map((c, idx) => (idx === i ? { ...c, ...patch } : c));
@@ -364,6 +377,32 @@ function PracticalSimulationEditor({ content, aiAllowed, allowedTools, onContent
         />
       </div>
 
+      <div>
+        <FieldLabel>Submission Format (what shape the deliverable should be in)</FieldLabel>
+        <input
+          type="text"
+          value={content.submission_format || ""}
+          placeholder="e.g. a .xlsx file with formulas visible"
+          onChange={(e) => onContentChange({ ...content, submission_format: e.target.value })}
+          className={inputClass}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <StringListEditor
+          label="Required Software"
+          items={requiredSoftware}
+          onChange={(next) => onContentChange({ ...content, required_software: next })}
+          placeholder="e.g. Microsoft Excel"
+        />
+        <StringListEditor
+          label="Required Files (what the candidate must submit)"
+          items={requiredFiles}
+          onChange={(next) => onContentChange({ ...content, required_files: next })}
+          placeholder="e.g. financial_model.xlsx"
+        />
+      </div>
+
       <div className="grid grid-cols-2 gap-4 bg-ink/40 border border-border rounded-lg p-4">
         <div>
           <FieldLabel>AI Tool Use</FieldLabel>
@@ -397,6 +436,45 @@ function PracticalSimulationEditor({ content, aiAllowed, allowedTools, onContent
             onChange={(next) => onAllowedToolsChange(next.join(", "))}
             placeholder="e.g. ChatGPT"
           />
+        </div>
+
+        <div>
+          <FieldLabel>Internet Access</FieldLabel>
+          <div className="flex gap-4 mt-2">
+            <label className="flex items-center gap-1.5 text-sm text-text">
+              <input
+                type="radio"
+                checked={internetAllowed === "allowed"}
+                onChange={() => onInternetAllowedChange("allowed")}
+              />
+              Allowed
+            </label>
+            <label className="flex items-center gap-1.5 text-sm text-text">
+              <input
+                type="radio"
+                checked={internetAllowed !== "allowed"}
+                onChange={() => onInternetAllowedChange("not_allowed")}
+              />
+              Not Allowed
+            </label>
+          </div>
+        </div>
+
+        <div>
+          <FieldLabel>Proof of Work</FieldLabel>
+          <label className="flex items-center gap-2 text-sm text-text mt-2">
+            <input
+              type="checkbox"
+              checked={proofOfWorkRequired}
+              onChange={(e) => onProofOfWorkRequiredChange(e.target.checked)}
+            />
+            Require the candidate to confirm/describe their process
+          </label>
+          <p className="text-xs text-muted/70 mt-1.5">
+            Prototype note: this shows a consent step to the candidate, but no
+            actual screen/video recording is captured — no paid proctoring
+            service is used in this build.
+          </p>
         </div>
       </div>
 
@@ -443,6 +521,8 @@ function TestCard({ test, onSaved }) {
   const [content, setContent] = useState(test.content);
   const [aiAllowed, setAiAllowed] = useState(test.ai_allowed || "not_allowed");
   const [allowedTools, setAllowedTools] = useState(test.allowed_tools || "");
+  const [internetAllowed, setInternetAllowed] = useState(test.internet_allowed || "not_allowed");
+  const [proofOfWorkRequired, setProofOfWorkRequired] = useState(!!test.proof_of_work_required);
   const [saving, setSaving] = useState(false);
   const [approving, setApproving] = useState(false);
   const [error, setError] = useState("");
@@ -472,6 +552,8 @@ function TestCard({ test, onSaved }) {
           content,
           ai_allowed: test.test_type === "practical_simulation" ? aiAllowed : null,
           allowed_tools: test.test_type === "practical_simulation" ? allowedTools : null,
+          internet_allowed: test.test_type === "practical_simulation" ? internetAllowed : null,
+          proof_of_work_required: test.test_type === "practical_simulation" ? proofOfWorkRequired : false,
         }),
       });
       const data = await response.json();
@@ -569,9 +651,13 @@ function TestCard({ test, onSaved }) {
             content={content}
             aiAllowed={aiAllowed}
             allowedTools={allowedTools}
+            internetAllowed={internetAllowed}
+            proofOfWorkRequired={proofOfWorkRequired}
             onContentChange={markDirty(setContent)}
             onAiAllowedChange={markDirty(setAiAllowed)}
             onAllowedToolsChange={markDirty(setAllowedTools)}
+            onInternetAllowedChange={markDirty(setInternetAllowed)}
+            onProofOfWorkRequiredChange={markDirty(setProofOfWorkRequired)}
           />
         )}
       </fieldset>

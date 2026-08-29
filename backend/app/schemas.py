@@ -96,6 +96,8 @@ class AssessmentTestOut(BaseModel):
     content: dict           # parsed from content_json for the API response
     ai_allowed: str | None
     allowed_tools: str | None
+    internet_allowed: str | None
+    proof_of_work_required: bool
     status: str
     created_at: datetime
     updated_at: datetime | None
@@ -112,6 +114,8 @@ class AssessmentTestUpdate(BaseModel):
     content: dict
     ai_allowed: str | None = None      # "allowed" | "not_allowed" (Test 3 only)
     allowed_tools: str | None = None
+    internet_allowed: str | None = None       # "allowed" | "not_allowed" (Test 3 only)
+    proof_of_work_required: bool = False      # Test 3 only
 
 
 class AssessmentOut(BaseModel):

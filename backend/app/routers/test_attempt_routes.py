@@ -56,6 +56,8 @@ def _attempt_to_out(attempt: models.TestAttempt, test: models.AssessmentTest) ->
         "duration_minutes": test.duration_minutes,
         "ai_allowed": test.ai_allowed,
         "allowed_tools": test.allowed_tools,
+        "internet_allowed": test.internet_allowed,
+        "proof_of_work_required": bool(test.proof_of_work_required),
         "content": _sanitize_content(content),
         "status": attempt.status,
         "started_at": attempt.started_at,
@@ -105,6 +107,8 @@ def get_candidate_assessments(candidate_id: int, db: Session = Depends(get_db)):
                 "duration_minutes": test.duration_minutes,
                 "ai_allowed": test.ai_allowed,
                 "allowed_tools": test.allowed_tools,
+                "internet_allowed": test.internet_allowed,
+                "proof_of_work_required": bool(test.proof_of_work_required),
                 "status": attempt.status if attempt else "not_started",
             })
 
@@ -118,6 +122,37 @@ def get_candidate_assessments(candidate_id: int, db: Session = Depends(get_db)):
         })
 
     return results
+
+
+@router.get("/preview/{assessment_test_id}")
+def preview_test(assessment_test_id: int, db: Session = Depends(get_db)):
+    """A read-only look at a test's rules -- duration, AI/internet policy,
+    required software, submission format -- WITHOUT starting the clock or
+    creating an attempt. Powers the pre-test instructions/consent screen."""
+    test = db.query(models.AssessmentTest).filter(models.AssessmentTest.id == assessment_test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    try:
+        content = json.loads(test.content_json) if test.content_json else {}
+    except (json.JSONDecodeError, TypeError):
+        content = {}
+
+    return {
+        "test_id": test.id,
+        "test_number": test.test_number,
+        "test_type": test.test_type,
+        "title": test.title,
+        "instructions": test.instructions,
+        "duration_minutes": test.duration_minutes,
+        "ai_allowed": test.ai_allowed,
+        "allowed_tools": test.allowed_tools,
+        "internet_allowed": test.internet_allowed,
+        "proof_of_work_required": bool(test.proof_of_work_required),
+        "required_software": content.get("required_software", []),
+        "submission_format": content.get("submission_format", ""),
+        "required_files": content.get("required_files", []),
+    }
 
 
 @router.post("/start")
