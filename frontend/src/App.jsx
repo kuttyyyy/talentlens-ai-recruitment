@@ -7,6 +7,8 @@ import Register from "./pages/Register";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import ResumeUpload from "./pages/ResumeUpload";
+import Verification from "./pages/Verification";
+import RecruiterFeedback from "./pages/RecruiterFeedback";
 import CandidateProfile from "./pages/CandidateProfile";
 import MyAssessments from "./pages/MyAssessments";
 import TakeTest from "./pages/TakeTest";
@@ -20,6 +22,11 @@ import AdminDashboard from "./pages/AdminDashboard";
 import Assessments from "./pages/Assessments";
 import NewAssessment from "./pages/NewAssessment";
 import AssessmentDetail from "./pages/AssessmentDetail";
+import AdminPortalLogin from "./pages/AdminPortalLogin";
+import AdminPortalDashboard from "./pages/AdminPortalDashboard";
+import AdminPortalCompanies from "./pages/AdminPortalCompanies";
+import AdminPortalRecruiters from "./pages/AdminPortalRecruiters";
+import AdminPortalAuditLog from "./pages/AdminPortalAuditLog";
 
 function App() {
   return (
@@ -30,6 +37,8 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/upload-resume" element={<ResumeUpload />} />
+        <Route path="/verification" element={<Verification />} />
+        <Route path="/feedback" element={<RecruiterFeedback />} />
         <Route path="/profile" element={<CandidateProfile />} />
         <Route path="/my-assessments" element={<MyAssessments />} />
         <Route path="/test/:applicationId/:testId" element={<TakeTest />} />
@@ -43,6 +52,15 @@ function App() {
         <Route path="/assessments" element={<Assessments />} />
         <Route path="/assessments/new" element={<NewAssessment />} />
         <Route path="/assessments/:assessmentId" element={<AssessmentDetail />} />
+
+        {/* Admin Portal -- deliberately NOT linked from any nav on the public site.
+            Reachable only by navigating here directly; real security is the
+            backend's role/token checks, not this route being unlisted. */}
+        <Route path="/admin-portal/login" element={<AdminPortalLogin />} />
+        <Route path="/admin-portal/dashboard" element={<AdminPortalDashboard />} />
+        <Route path="/admin-portal/companies" element={<AdminPortalCompanies />} />
+        <Route path="/admin-portal/recruiters" element={<AdminPortalRecruiters />} />
+        <Route path="/admin-portal/audit-log" element={<AdminPortalAuditLog />} />
       </Routes>
     </BrowserRouter>
   );

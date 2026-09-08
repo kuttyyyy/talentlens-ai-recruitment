@@ -24,6 +24,22 @@ function formatTime(totalSeconds) {
   return `${String(m).padStart(2, "0")}:${String(rem).padStart(2, "0")}`;
 }
 
+// The backend always stores/sends timestamps in UTC, but depending on how
+// they round-trip through the database, they can arrive without a "Z" or
+// "+00:00" suffix (e.g. "2026-08-29T10:00:00" instead of
+// "2026-08-29T10:00:00Z"). JavaScript's Date treats a timestamp with no
+// timezone marker as LOCAL time, not UTC -- so for anyone outside UTC this
+// silently shifts "started_at" by their timezone offset. In India (UTC+5:30)
+// that made every attempt look like it started 5.5 hours in the past,
+// instantly tripping the countdown into negative time and auto-submitting
+// before the candidate ever saw a question. This normalizes the string to
+// be unambiguously UTC before parsing it.
+function parseUtc(dateString) {
+  if (!dateString) return NaN;
+  const hasTimezone = /Z$|[+-]\d{2}:?\d{2}$/.test(dateString);
+  return new Date(hasTimezone ? dateString : dateString + "Z").getTime();
+}
+
 function TakeTest() {
   const { applicationId, testId } = useParams();
   const user = JSON.parse(localStorage.getItem("user"));
@@ -104,7 +120,7 @@ function TakeTest() {
     if (!started || !attempt?.started_at || submitted) return;
 
     function tick() {
-      const startedAt = new Date(attempt.started_at).getTime();
+      const startedAt = parseUtc(attempt.started_at);
       const deadline = startedAt + attempt.duration_minutes * 60 * 1000;
       const remaining = Math.floor((deadline - Date.now()) / 1000);
       setSecondsLeft(remaining);

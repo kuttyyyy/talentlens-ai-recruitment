@@ -5,7 +5,7 @@
 
 import json
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app import models, schemas
 from app.ai_engine import analyze_match_with_ai, fallback_match_score, detect_duplicate_applicant, analyze_cv_jd_match
@@ -158,6 +158,7 @@ def get_job_applicants(job_id: int, db: Session = Depends(get_db)):
     this is the recruiter's AI ranking view."""
     applications = (
         db.query(models.Application)
+        .options(joinedload(models.Application.candidate))
         .filter(models.Application.job_id == job_id)
         .order_by(models.Application.match_score.desc())
         .all()

@@ -214,3 +214,69 @@ class EvaluationWeightsUpdate(BaseModel):
     test1_weight: int
     test2_weight: int
     test3_weight: int
+
+
+# ---------------------------------------------------------------------------
+# Module 9 -- Interview & Selection Management
+# ---------------------------------------------------------------------------
+
+class InterviewQuestionUpdate(BaseModel):
+    question_text: str
+
+
+class InterviewQuestionCreate(BaseModel):
+    question_text: str
+    category: str = "general"
+
+
+class InterviewFeedbackCreate(BaseModel):
+    technical_competency: int | None = None
+    communication: int | None = None
+    problem_solving: int | None = None
+    job_knowledge: int | None = None
+    overall_feedback: str | None = None
+    recommendation: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Module 11 -- Recruiter Feedback & Analytics
+# ---------------------------------------------------------------------------
+
+class RecruiterFeedbackCreate(BaseModel):
+    overall_usefulness: int | None = None
+    ease_of_use: int | None = None
+    jd_analysis_useful: int | None = None
+    test_generation_useful: int | None = None
+    cv_matching_useful: int | None = None
+    practical_assessment_useful: int | None = None
+    candidate_report_useful: int | None = None
+    integrity_info_useful: int | None = None
+    would_use_again: int | None = None
+    improvement_suggestions: str | None = None
+    company_name: str | None = None
+    role_title: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Admin Portal -- RBAC & Permission Structure
+# ---------------------------------------------------------------------------
+
+class AdminLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class CompanyCreate(BaseModel):
+    name: str
+
+
+class RecruiterPermissionsUpdate(BaseModel):
+    company_id: int | None = None
+    is_company_admin: bool = False
+    can_view_company_wide: bool = False
+    can_manage_recruiters: bool = False
+
+
+class UserStatusUpdate(BaseModel):
+    account_status: str  # "active" | "warned" | "suspended" | "disabled" | "banned"
+    reason: str | None = None

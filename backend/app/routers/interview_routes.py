@@ -4,12 +4,19 @@
 #   2. Draft an interview invite, rejection, or shortlist email
 #   3. Only send it once the recruiter explicitly confirms
 
+import json
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app import models
-from app.ai_engine import generate_interview_questions, draft_interview_email, draft_status_email
+from app import models, schemas
+from app.ai_engine import (
+    generate_interview_questions,
+    generate_categorized_interview_questions,
+    summarize_interview_feedback,
+    draft_interview_email,
+    draft_status_email,
+)
 from app.email_utils import send_email
 
 router = APIRouter(prefix="/interview", tags=["Interview"])
@@ -26,7 +33,9 @@ class SendEmailRequest(BaseModel):
 
 @router.post("/generate-questions/{application_id}")
 def create_interview_questions(application_id: int, db: Session = Depends(get_db)):
-    """Generates and stores tailored interview questions for one applicant."""
+    """Generates and stores categorized interview questions for one
+    applicant, using their CV, the CV-JD matching results, and their test
+    performance so far -- not just the resume alone."""
     application = db.query(models.Application).filter(models.Application.id == application_id).first()
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -39,37 +48,205 @@ def create_interview_questions(application_id: int, db: Session = Depends(get_db
 
     job = application.job
 
-    questions = generate_interview_questions(
-        resume_text=candidate_profile.resume_text,
+    try:
+        jd_match = json.loads(application.jd_match_json) if application.jd_match_json else {}
+    except (json.JSONDecodeError, TypeError):
+        jd_match = {}
+
+    test_summaries = []
+    assessment = (
+        db.query(models.Assessment)
+        .filter(models.Assessment.job_id == application.job_id, models.Assessment.status == "approved")
+        .first()
+    )
+    if assessment:
+        for test in assessment.tests:
+            attempt = (
+                db.query(models.TestAttempt)
+                .filter(
+                    models.TestAttempt.application_id == application_id,
+                    models.TestAttempt.assessment_test_id == test.id,
+                )
+                .first()
+            )
+            if attempt and attempt.evaluation_json:
+                try:
+                    ev = json.loads(attempt.evaluation_json)
+                    test_summaries.append({
+                        "test_number": test.test_number,
+                        "score": attempt.evaluation_score,
+                        "weaknesses": ev.get("weaknesses", []),
+                    })
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+    categorized = generate_categorized_interview_questions(
         job_title=job.title,
         job_description=job.description,
-        ai_reasoning=application.ai_reasoning or "",
+        resume_text=candidate_profile.resume_text,
+        jd_match=jd_match,
+        test_summaries=test_summaries,
     )
 
-    if not questions or isinstance(questions, dict):
-        error_detail = questions.get("error") if isinstance(questions, dict) else "Unknown error"
-        raise HTTPException(status_code=503, detail=f"AI question generation failed: {error_detail}")
+    if not categorized:
+        raise HTTPException(status_code=503, detail="AI question generation failed. Please try again.")
 
     db.query(models.InterviewQuestion).filter(
         models.InterviewQuestion.application_id == application_id
     ).delete()
 
-    for q_text in questions:
-        db.add(models.InterviewQuestion(application_id=application_id, question_text=q_text))
+    category_map = {
+        "technical": "technical",
+        "behavioral": "behavioral",
+        "situational": "situational",
+        "cv_based": "cv_based",
+        "role_specific": "role_specific",
+    }
+    for key, category in category_map.items():
+        for q_text in categorized.get(key, []):
+            db.add(models.InterviewQuestion(application_id=application_id, question_text=q_text, category=category))
     db.commit()
 
-    return {"questions": questions}
+    return get_interview_questions(application_id, db)
 
 
 @router.get("/questions/{application_id}")
 def get_interview_questions(application_id: int, db: Session = Depends(get_db)):
-    """Fetches previously generated questions for an applicant, if any."""
+    """Fetches previously generated/edited questions, grouped by category."""
     questions = (
         db.query(models.InterviewQuestion)
         .filter(models.InterviewQuestion.application_id == application_id)
+        .order_by(models.InterviewQuestion.id)
         .all()
     )
-    return {"questions": [q.question_text for q in questions]}
+    grouped = {}
+    for q in questions:
+        grouped.setdefault(q.category, []).append({"id": q.id, "question_text": q.question_text})
+    return {"questions_by_category": grouped}
+
+
+@router.put("/questions/{question_id}")
+def update_interview_question(question_id: int, update: schemas.InterviewQuestionUpdate, db: Session = Depends(get_db)):
+    """A recruiter edits an AI-generated question before the interview."""
+    question = db.query(models.InterviewQuestion).filter(models.InterviewQuestion.id == question_id).first()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    question.question_text = update.question_text
+    db.commit()
+    return {"message": "Question updated"}
+
+
+@router.delete("/questions/{question_id}")
+def delete_interview_question(question_id: int, db: Session = Depends(get_db)):
+    """A recruiter removes a question they don't want to ask."""
+    question = db.query(models.InterviewQuestion).filter(models.InterviewQuestion.id == question_id).first()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    db.delete(question)
+    db.commit()
+    return {"message": "Question deleted"}
+
+
+@router.post("/questions/{application_id}/add")
+def add_interview_question(application_id: int, question: schemas.InterviewQuestionCreate, db: Session = Depends(get_db)):
+    """A recruiter adds their own custom question alongside the AI-generated ones."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    new_question = models.InterviewQuestion(
+        application_id=application_id, question_text=question.question_text, category=question.category
+    )
+    db.add(new_question)
+    db.commit()
+    db.refresh(new_question)
+    return {"id": new_question.id, "question_text": new_question.question_text, "category": new_question.category}
+
+
+@router.post("/feedback/{application_id}")
+def save_interview_feedback(application_id: int, feedback: schemas.InterviewFeedbackCreate, recruiter_id: int, db: Session = Depends(get_db)):
+    """Recruiter records their own interview feedback. One record per
+    (application, recruiter) -- calling this again updates it."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if application.job.recruiter_id != recruiter_id:
+        raise HTTPException(status_code=403, detail="This application doesn't belong to one of your jobs")
+
+    record = (
+        db.query(models.InterviewFeedback)
+        .filter(models.InterviewFeedback.application_id == application_id, models.InterviewFeedback.recruiter_id == recruiter_id)
+        .first()
+    )
+    if not record:
+        record = models.InterviewFeedback(application_id=application_id, recruiter_id=recruiter_id)
+        db.add(record)
+
+    record.technical_competency = feedback.technical_competency
+    record.communication = feedback.communication
+    record.problem_solving = feedback.problem_solving
+    record.job_knowledge = feedback.job_knowledge
+    record.overall_feedback = feedback.overall_feedback
+    record.recommendation = feedback.recommendation
+    record.ai_summary = None  # stale after any edit -- recruiter must re-summarize
+
+    db.commit()
+    db.refresh(record)
+    return {"id": record.id, "message": "Feedback saved"}
+
+
+@router.get("/feedback/{application_id}")
+def get_interview_feedback(application_id: int, recruiter_id: int, db: Session = Depends(get_db)):
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if application.job.recruiter_id != recruiter_id:
+        raise HTTPException(status_code=403, detail="This application doesn't belong to one of your jobs")
+
+    record = (
+        db.query(models.InterviewFeedback)
+        .filter(models.InterviewFeedback.application_id == application_id, models.InterviewFeedback.recruiter_id == recruiter_id)
+        .first()
+    )
+    if not record:
+        return None
+    return {
+        "id": record.id,
+        "technical_competency": record.technical_competency,
+        "communication": record.communication,
+        "problem_solving": record.problem_solving,
+        "job_knowledge": record.job_knowledge,
+        "overall_feedback": record.overall_feedback,
+        "recommendation": record.recommendation,
+        "ai_summary": record.ai_summary,
+    }
+
+
+@router.post("/feedback/{application_id}/summarize")
+def summarize_feedback(application_id: int, recruiter_id: int, db: Session = Depends(get_db)):
+    """Generates an AI summary FROM the recruiter's own recorded feedback.
+    Never adds a recommendation of its own."""
+    record = (
+        db.query(models.InterviewFeedback)
+        .filter(models.InterviewFeedback.application_id == application_id, models.InterviewFeedback.recruiter_id == recruiter_id)
+        .first()
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="No feedback recorded yet for this application")
+
+    summary = summarize_interview_feedback({
+        "technical_competency": record.technical_competency,
+        "communication": record.communication,
+        "problem_solving": record.problem_solving,
+        "job_knowledge": record.job_knowledge,
+        "overall_feedback": record.overall_feedback,
+        "recommendation": record.recommendation,
+    })
+    if not summary:
+        raise HTTPException(status_code=503, detail="AI summarization failed. Please try again.")
+
+    record.ai_summary = summary
+    db.commit()
+    return {"ai_summary": summary}
 
 
 @router.post("/draft-email/{application_id}")

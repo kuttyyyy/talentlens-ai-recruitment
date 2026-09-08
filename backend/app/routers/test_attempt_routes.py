@@ -266,15 +266,17 @@ def get_attempts_for_recruiter(application_id: int, recruiter_id: int, db: Sessi
         return {"tests": []}
 
     results = []
+    test_ids = [t.id for t in assessment.tests]
+    attempts_by_test_id = {
+        at.assessment_test_id: at
+        for at in db.query(models.TestAttempt).filter(
+            models.TestAttempt.application_id == application_id,
+            models.TestAttempt.assessment_test_id.in_(test_ids),
+        ).all()
+    } if test_ids else {}
+
     for test in assessment.tests:
-        attempt = (
-            db.query(models.TestAttempt)
-            .filter(
-                models.TestAttempt.application_id == application_id,
-                models.TestAttempt.assessment_test_id == test.id,
-            )
-            .first()
-        )
+        attempt = attempts_by_test_id.get(test.id)
 
         try:
             answers = json.loads(attempt.answers_json) if attempt and attempt.answers_json else {}

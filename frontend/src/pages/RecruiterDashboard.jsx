@@ -119,6 +119,15 @@ function RecruiterDashboard() {
     { label: "Shortlisted", value: stats.status_breakdown.shortlisted, sub: "candidates in review" },
   ];
 
+  const pipelineCards = [
+    { label: "CV Screened", value: stats.cv_screened, sub: "AI-matched at apply time" },
+    { label: "Assessments Pending", value: stats.assessments_pending, sub: "candidates still testing" },
+    { label: "Assessments Completed", value: stats.assessments_completed, sub: "all 3 tests submitted" },
+    { label: "Practical Tests Completed", value: stats.practical_tests_completed, sub: "Test 3 submissions" },
+    { label: "Candidates Requiring Review", value: stats.candidates_requiring_review, sub: "flagged for a closer look" },
+    { label: "Interviews Scheduled", value: stats.interviews_scheduled, sub: "in your pipeline" },
+  ];
+
   return (
     <AppShell>
       <p className="font-mono text-xs text-gold tracking-widest mb-2">RECRUITER</p>
@@ -184,8 +193,20 @@ function RecruiterDashboard() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10 max-w-3xl">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 max-w-3xl">
         {statCards.map((card) => (
+          <div key={card.label} className="bg-surface border border-border rounded-xl p-4">
+            <p className="text-2xl font-display text-text mb-1">{card.value}</p>
+            <p className="text-xs text-muted uppercase tracking-wide">{card.label}</p>
+            <p className="text-xs text-muted/70 mt-1">{card.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Module 8 -- assessment pipeline visibility */}
+      <p className="text-xs text-muted uppercase tracking-wide mb-3">Assessment Pipeline</p>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-10 max-w-3xl">
+        {pipelineCards.map((card) => (
           <div key={card.label} className="bg-surface border border-border rounded-xl p-4">
             <p className="text-2xl font-display text-text mb-1">{card.value}</p>
             <p className="text-xs text-muted uppercase tracking-wide">{card.label}</p>

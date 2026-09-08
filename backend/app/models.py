@@ -8,6 +8,17 @@ from sqlalchemy.sql import func
 from app.database import Base
 
 
+class Company(Base):
+    """A recruiting organization on the platform. Recruiters and company
+    admins belong to a company; candidates and the Super Admin do not."""
+    __tablename__ = "companies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    status = Column(String, default="active")  # active | suspended
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class User(Base):
     """Every person who can log in: candidates, recruiters, and admins."""
     __tablename__ = "users"
@@ -19,9 +30,28 @@ class User(Base):
     role = Column(String, nullable=False)  # "candidate", "recruiter", or "admin"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # --- Admin Portal / RBAC additions ---
+    # Meaningful only for role == "admin": distinguishes the platform Owner
+    # from any other admin-role account. Only "super_admin" gets the portal.
+    admin_level = Column(String, nullable=True)  # "super_admin" | None
+
+    # Meaningful only for role == "recruiter": which company they belong to,
+    # and what they're allowed to see beyond their own jobs.
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
+    is_company_admin = Column(Boolean, default=False)          # sees ALL of their company's jobs/candidates
+    can_view_company_wide = Column(Boolean, default=False)     # a regular recruiter granted the same, without being a company admin
+    can_manage_recruiters = Column(Boolean, default=False)     # company admin can invite/manage other recruiters in their company
+
+    # Account status -- Super Admin only can change this (see admin_portal_routes.py)
+    account_status = Column(String, default="active")  # active | warned | suspended | disabled | banned
+    suspension_reason = Column(Text, nullable=True)
+    suspended_at = Column(DateTime(timezone=True), nullable=True)
+    suspended_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
     # Relationships let us easily access related data, e.g. user.candidate_profile
     candidate_profile = relationship("CandidateProfile", back_populates="user", uselist=False)
     jobs_posted = relationship("Job", back_populates="recruiter")
+    company = relationship("Company", foreign_keys="User.company_id")
 
 
 class CandidateProfile(Base):
@@ -61,13 +91,14 @@ class Job(Base):
     __tablename__ = "jobs"
 
     id = Column(Integer, primary_key=True, index=True)
-    recruiter_id = Column(Integer, ForeignKey("users.id"))
+    recruiter_id = Column(Integer, ForeignKey("users.id"), index=True)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=False)
     required_skills = Column(Text, nullable=False)   # comma-separated, used for AI matching
     location = Column(String, nullable=True)
     job_type = Column(String, nullable=True)          # e.g. Full-time, Internship
     status = Column(String, default="open")           # "open" or "closed"
+    views_count = Column(Integer, default=0)            # incremented each time a candidate opens the job detail
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     recruiter = relationship("User", back_populates="jobs_posted")
@@ -79,8 +110,8 @@ class Application(Base):
     __tablename__ = "applications"
 
     id = Column(Integer, primary_key=True, index=True)
-    job_id = Column(Integer, ForeignKey("jobs.id"))
-    candidate_id = Column(Integer, ForeignKey("users.id"))
+    job_id = Column(Integer, ForeignKey("jobs.id"), index=True)
+    candidate_id = Column(Integer, ForeignKey("users.id"), index=True)
     match_score = Column(Float, nullable=True)         # AI-calculated 0-100 score
     ai_reasoning = Column(Text, nullable=True)          # AI's explanation for the score
     ai_recommendation = Column(String, nullable=True)   # "auto_reject", "needs_review", or "auto_shortlist"
@@ -92,6 +123,10 @@ class Application(Base):
     cv_analysis_json = Column(Text, nullable=True)   # {education, skills, experience, internships, certifications, projects, achievements}
     jd_match_json = Column(Text, nullable=True)       # {requirements: [{requirement, evidence, match}], alignment_score, strong_matches, partial_matches, missing_requirements, summary}
 
+    # Module 8 -- consolidated AI summary across CV match + all 3 tests,
+    # regenerated whenever evaluation is (re-)run
+    candidate_summary_json = Column(Text, nullable=True)
+
     status = Column(String, default="applied")          # applied, shortlisted, interview_scheduled, rejected, hired
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -101,15 +136,81 @@ class Application(Base):
 
 
 class InterviewQuestion(Base):
-    """AI-generated interview questions for a specific application."""
+    """AI-generated (or recruiter-added) interview questions for a specific application."""
     __tablename__ = "interview_questions"
 
     id = Column(Integer, primary_key=True, index=True)
     application_id = Column(Integer, ForeignKey("applications.id"))
     question_text = Column(Text, nullable=False)
+    category = Column(String, default="general")  # technical | behavioral | situational | cv_based | role_specific | general
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     application = relationship("Application", back_populates="interview_questions")
+
+
+class InterviewFeedback(Base):
+    """Module 9 -- a recruiter's own interview feedback for one candidate.
+    The recommendation field is the recruiter's own word, never AI-decided.
+    ai_summary is generated FROM this feedback, not the other way around."""
+    __tablename__ = "interview_feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"))
+    recruiter_id = Column(Integer, ForeignKey("users.id"))
+
+    technical_competency = Column(Integer, nullable=True)  # 1-5
+    communication = Column(Integer, nullable=True)          # 1-5
+    problem_solving = Column(Integer, nullable=True)        # 1-5
+    job_knowledge = Column(Integer, nullable=True)           # 1-5
+    overall_feedback = Column(Text, nullable=True)
+    recommendation = Column(String, nullable=True)  # recruiter's own word, e.g. "Move Forward" / "Hold" / "Reject"
+    ai_summary = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class VerificationDocument(Base):
+    """Module 10 -- a document a candidate voluntarily uploaded for
+    consent-based self-consistency checking against their own declared
+    profile info. This is NOT a real background-check integration -- no
+    external authoritative source is queried."""
+    __tablename__ = "verification_documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    candidate_id = Column(Integer, ForeignKey("users.id"))
+    document_type = Column(String, nullable=False)  # "education" | "employment" | "other"
+    file_path = Column(String, nullable=False)
+    extracted_text = Column(Text, nullable=True)
+    comparison_result = Column(String, nullable=True)  # "verified" | "inconsistent" | "needs_review" | "unable_to_verify"
+    comparison_notes = Column(Text, nullable=True)
+    consent_given = Column(Boolean, default=False)
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class RecruiterFeedback(Base):
+    """Module 11 -- a recruiter's feedback on the TalentLens platform
+    itself (not about any candidate). One row per submission -- a
+    recruiter can submit more than once over time."""
+    __tablename__ = "recruiter_feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    recruiter_id = Column(Integer, ForeignKey("users.id"))
+
+    overall_usefulness = Column(Integer, nullable=True)          # 1-5
+    ease_of_use = Column(Integer, nullable=True)                  # 1-5
+    jd_analysis_useful = Column(Integer, nullable=True)           # 1-5
+    test_generation_useful = Column(Integer, nullable=True)       # 1-5
+    cv_matching_useful = Column(Integer, nullable=True)           # 1-5
+    practical_assessment_useful = Column(Integer, nullable=True)  # 1-5
+    candidate_report_useful = Column(Integer, nullable=True)      # 1-5
+    integrity_info_useful = Column(Integer, nullable=True)        # 1-5
+    would_use_again = Column(Integer, nullable=True)              # 1-5
+    improvement_suggestions = Column(Text, nullable=True)
+    company_name = Column(String, nullable=True)   # optional
+    role_title = Column(String, nullable=True)      # optional
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class Assessment(Base):
@@ -121,7 +222,7 @@ class Assessment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     recruiter_id = Column(Integer, ForeignKey("users.id"))
-    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)  # optional link to a real job posting
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)  # optional link to a real job posting
     title = Column(String, nullable=False)
     jd_text = Column(Text, nullable=False)
 
@@ -163,7 +264,7 @@ class AssessmentTest(Base):
     __tablename__ = "assessment_tests"
 
     id = Column(Integer, primary_key=True, index=True)
-    assessment_id = Column(Integer, ForeignKey("assessments.id"))
+    assessment_id = Column(Integer, ForeignKey("assessments.id"), index=True)
     test_number = Column(Integer, nullable=False)  # 1, 2, or 3
     test_type = Column(String, nullable=False)  # knowledge_reasoning | situational_judgment | practical_simulation
     title = Column(String, nullable=False)
@@ -192,8 +293,8 @@ class TestAttempt(Base):
     __tablename__ = "test_attempts"
 
     id = Column(Integer, primary_key=True, index=True)
-    application_id = Column(Integer, ForeignKey("applications.id"))
-    assessment_test_id = Column(Integer, ForeignKey("assessment_tests.id"))
+    application_id = Column(Integer, ForeignKey("applications.id"), index=True)
+    assessment_test_id = Column(Integer, ForeignKey("assessment_tests.id"), index=True)
 
     answers_json = Column(Text, nullable=True)   # candidate's saved answers, shape depends on test_type
     status = Column(String, default="not_started")  # not_started | in_progress | submitted
@@ -228,4 +329,18 @@ class EmailLog(Base):
     body = Column(Text, nullable=False)
     status = Column(String, default="draft")   # "draft" or "sent"
     email_type = Column(String, default="interview_invite")   # "interview_invite", "rejected", or "shortlisted"
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class AuditLog(Base):
+    """Records important actions across the platform for the Super Admin
+    (and, filtered, Company Admins) to review. Never deleted or edited --
+    an audit trail is only useful if it's tamper-evident by convention."""
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    action = Column(String, nullable=False)         # e.g. "admin_login", "permission_changed", "account_status_changed"
+    target_type = Column(String, nullable=True)      # "user" | "company" | "job" | None
+    target_id = Column(Integer, nullable=True)
+    details = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

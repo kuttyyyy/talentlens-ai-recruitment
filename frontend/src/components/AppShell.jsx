@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { label: "Dashboard", path: "/dashboard", roles: ["candidate", "recruiter", "admin"] },
   { label: "My Profile", path: "/profile", roles: ["candidate"] },
   { label: "Upload Resume", path: "/upload-resume", roles: ["candidate"] },
+  { label: "Verification", path: "/verification", roles: ["candidate"] },
   { label: "Browse Jobs", path: "/browse-jobs", roles: ["candidate"] },
   { label: "My Applications", path: "/my-applications", roles: ["candidate"] },
   { label: "My Assessments", path: "/my-assessments", roles: ["candidate"] },
@@ -20,6 +21,7 @@ const NAV_ITEMS = [
   { label: "JD Assessments", path: "/assessments", roles: ["recruiter"] },
   { label: "Applicants", path: "/applicants", roles: ["recruiter"] },
   { label: "Reports", path: "/reports", roles: ["recruiter"] },
+  { label: "Give Feedback", path: "/feedback", roles: ["recruiter"] },
   { label: "Admin Panel", path: "/admin", roles: ["admin"] },
 ];
 

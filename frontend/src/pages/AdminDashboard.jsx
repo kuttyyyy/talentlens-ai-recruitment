@@ -35,6 +35,14 @@ function AdminDashboard() {
     { label: "Applications", value: analytics.total_applications },
   ];
 
+  const assessmentCards = [
+    { label: "Assessment Completion Rate", value: analytics.assessment_completion_rate !== null ? `${analytics.assessment_completion_rate}%` : "—" },
+    { label: "Avg. Test 1 Score", value: analytics.average_test1_score ?? "—" },
+    { label: "Avg. Test 2 Score", value: analytics.average_test2_score ?? "—" },
+    { label: "Avg. Practical Score", value: analytics.average_test3_score ?? "—" },
+    { label: "Avg. Completion Time", value: analytics.average_completion_minutes !== null ? `${analytics.average_completion_minutes} min` : "—" },
+  ];
+
   return (
     <AppShell>
       <p className="font-mono text-xs text-gold tracking-widest mb-2">ADMIN</p>
@@ -48,6 +56,92 @@ function AdminDashboard() {
             <p className="text-xs text-muted uppercase tracking-wide">{c.label}</p>
           </div>
         ))}
+      </div>
+
+      {/* Module 11 -- Assessment Analytics */}
+      <h2 className="text-text font-display text-xl mb-3">Assessment Analytics</h2>
+      <div className="grid grid-cols-3 gap-4 mb-10 max-w-3xl">
+        {assessmentCards.map((c) => (
+          <div key={c.label} className="bg-surface border border-border rounded-xl p-4">
+            <p className="text-2xl font-display text-text mb-1">{c.value}</p>
+            <p className="text-xs text-muted uppercase tracking-wide">{c.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Candidates by stage */}
+      <h2 className="text-text font-display text-xl mb-3">Candidates by Stage</h2>
+      <div className="flex flex-wrap gap-3 mb-10 max-w-3xl">
+        {Object.entries(analytics.candidates_by_stage || {}).map(([stage, count]) => (
+          <div key={stage} className="bg-surface border border-border rounded-lg px-4 py-2 flex items-center gap-2">
+            <span className="text-text font-medium">{count}</span>
+            <span className="text-muted text-xs capitalize">{stage.replace("_", " ")}</span>
+          </div>
+        ))}
+        {Object.keys(analytics.candidates_by_stage || {}).length === 0 && (
+          <p className="text-muted text-sm">No applications yet.</p>
+        )}
+      </div>
+
+      {/* Recruiter satisfaction + most useful features */}
+      <div className="grid grid-cols-2 gap-6 mb-10 max-w-3xl">
+        <div>
+          <h2 className="text-text font-display text-xl mb-3">Recruiter Satisfaction</h2>
+          <div className="bg-surface border border-border rounded-xl p-4">
+            {analytics.recruiter_satisfaction?.responses_count > 0 ? (
+              <>
+                <p className="text-2xl font-display text-text mb-1">
+                  {analytics.recruiter_satisfaction.average_overall_usefulness} / 5
+                </p>
+                <p className="text-xs text-muted uppercase tracking-wide mb-3">Avg. Overall Usefulness</p>
+                <p className="text-sm text-text">
+                  {analytics.recruiter_satisfaction.average_would_use_again} / 5 would use again
+                </p>
+                <p className="text-xs text-muted/70 mt-1">
+                  Based on {analytics.recruiter_satisfaction.responses_count} response
+                  {analytics.recruiter_satisfaction.responses_count !== 1 ? "s" : ""}
+                </p>
+              </>
+            ) : (
+              <p className="text-muted text-sm">No recruiter feedback submitted yet.</p>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <h2 className="text-text font-display text-xl mb-3">Most Useful Features</h2>
+          <div className="bg-surface border border-border rounded-xl p-4">
+            {analytics.most_useful_features?.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                {analytics.most_useful_features.map((f) => (
+                  <div key={f.feature} className="flex items-center justify-between text-sm">
+                    <span className="text-text">{f.feature}</span>
+                    <span className="text-gold font-medium">{f.average_rating} / 5</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-muted text-sm">No feedback yet.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Common assessment issues */}
+      <h2 className="text-text font-display text-xl mb-3">Common Assessment Issues</h2>
+      <div className="bg-surface border border-border rounded-xl p-4 max-w-3xl mb-10">
+        {analytics.common_assessment_issues?.length > 0 ? (
+          <div className="flex flex-col gap-2">
+            {analytics.common_assessment_issues.map((issue) => (
+              <div key={issue.issue} className="flex items-center justify-between text-sm">
+                <span className="text-text">{issue.issue}</span>
+                <span className="text-muted">{issue.count} candidate{issue.count !== 1 ? "s" : ""}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-muted text-sm">No integrity signals recorded yet.</p>
+        )}
       </div>
 
       <h2 className="text-text font-display text-xl mb-3">All Users</h2>

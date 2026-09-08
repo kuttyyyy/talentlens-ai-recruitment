@@ -111,6 +111,9 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
     job = db.query(models.Job).filter(models.Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    job.views_count = (job.views_count or 0) + 1
+    db.commit()
+    db.refresh(job)
     return job
 
 
@@ -145,9 +148,10 @@ def close_job(job_id: int, db: Session = Depends(get_db)):
 
 @router.delete("/{job_id}/permanent")
 def delete_job_permanently(job_id: int, db: Session = Depends(get_db)):
-    """Permanently deletes a job posting AND every application submitted
-    to it (plus their interview questions and email drafts/logs). This
-    cannot be undone — unlike the DELETE /{job_id} endpoint above, which
+    """Permanently deletes a job posting AND everything tied to it: its
+    applications (plus their interview questions, email logs, and test
+    attempts), and its assessment (plus that assessment's 3 tests). This
+    cannot be undone -- unlike the DELETE /{job_id} endpoint above, which
     just marks the job 'closed' and keeps everything for historical reports."""
     job = db.query(models.Job).filter(models.Job.id == job_id).first()
     if not job:
@@ -158,6 +162,12 @@ def delete_job_permanently(job_id: int, db: Session = Depends(get_db)):
     ]
 
     if application_ids:
+        # Test attempts are tied to applications, not directly to jobs --
+        # must be cleared out before the applications themselves, since
+        # SQLite doesn't enforce foreign-key cascades on its own.
+        db.query(models.TestAttempt).filter(
+            models.TestAttempt.application_id.in_(application_ids)
+        ).delete(synchronize_session=False)
         db.query(models.InterviewQuestion).filter(
             models.InterviewQuestion.application_id.in_(application_ids)
         ).delete(synchronize_session=False)
@@ -168,6 +178,14 @@ def delete_job_permanently(job_id: int, db: Session = Depends(get_db)):
             models.Application.job_id == job_id
         ).delete(synchronize_session=False)
 
+    # The assessment (Module 1) tied to this job, plus its 3 tests. Loaded
+    # and deleted via the ORM (not a bulk .delete() query) so the
+    # cascade="all, delete-orphan" on Assessment.tests actually fires and
+    # takes the AssessmentTest rows with it.
+    assessment = db.query(models.Assessment).filter(models.Assessment.job_id == job_id).first()
+    if assessment:
+        db.delete(assessment)
+
     db.delete(job)
     db.commit()
-    return {"message": "Job and all its applications deleted permanently"}
+    return {"message": "Job and all its applications, assessments, and test data deleted permanently"}

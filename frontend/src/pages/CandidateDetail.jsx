@@ -8,7 +8,44 @@ import { useParams, useNavigate } from "react-router-dom";
 import AppShell from "../components/AppShell";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-const STATUS_OPTIONS = ["applied", "shortlisted", "interview_scheduled", "rejected", "hired"];
+const STATUS_OPTIONS = ["applied", "shortlisted", "interview_scheduled", "on_hold", "rejected", "hired"];
+
+const CATEGORY_LABELS = {
+  technical: "Technical",
+  behavioral: "Behavioral",
+  situational: "Situational",
+  cv_based: "CV-Based",
+  role_specific: "Role-Specific",
+  general: "Other",
+};
+
+function EditableQuestion({ q, onSave, onDelete }) {
+  const [text, setText] = useState(q.question_text);
+  const [dirty, setDirty] = useState(false);
+
+  return (
+    <div className="flex items-start gap-2">
+      <textarea
+        value={text}
+        rows={2}
+        onChange={(e) => {
+          setText(e.target.value);
+          setDirty(true);
+        }}
+        onBlur={() => {
+          if (dirty) {
+            onSave(q.id, text);
+            setDirty(false);
+          }
+        }}
+        className="flex-1 text-sm px-2.5 py-1.5 rounded-md bg-surface-2 border border-border text-text resize-none focus:outline-none focus:border-gold"
+      />
+      <button onClick={() => onDelete(q.id)} className="text-muted hover:text-danger text-xs px-1 mt-1.5">
+        ✕
+      </button>
+    </div>
+  );
+}
 
 function CandidateDetail() {
   const { applicationId } = useParams();
@@ -27,7 +64,21 @@ function CandidateDetail() {
   const [weightDraft, setWeightDraft] = useState({ test1_weight: 30, test2_weight: 25, test3_weight: 45 });
   const [savingWeights, setSavingWeights] = useState(false);
 
-  const [questions, setQuestions] = useState([]);
+  const [questions, setQuestions] = useState({}); // { category: [{id, question_text}] }
+  const [newQuestionCategory, setNewQuestionCategory] = useState("general");
+  const [newQuestionText, setNewQuestionText] = useState("");
+
+  // Module 9 -- interview feedback
+  const [feedback, setFeedback] = useState(null);
+  const [feedbackDraft, setFeedbackDraft] = useState({
+    technical_competency: 0, communication: 0, problem_solving: 0, job_knowledge: 0,
+    overall_feedback: "", recommendation: "",
+  });
+  const [savingFeedback, setSavingFeedback] = useState(false);
+  const [summarizingFeedback, setSummarizingFeedback] = useState(false);
+
+  // Module 10 -- verification documents (recruiter view)
+  const [verificationDocs, setVerificationDocs] = useState([]);
   const [generatingQuestions, setGeneratingQuestions] = useState(false);
 
   const [companyName, setCompanyName] = useState("Our Company");
@@ -43,6 +94,8 @@ function CandidateDetail() {
   useEffect(() => {
     loadApplication();
     loadEvaluationReport();
+    loadQuestions();
+    loadFeedback();
   }, [applicationId]);
 
   function loadApplication() {
@@ -51,9 +104,40 @@ function CandidateDetail() {
       .then((res) => res.json())
       .then((data) => {
         setApplication(data);
-        setQuestions(data.interview_questions || []);
+        if (data.candidate_id) {
+          fetch(`${BASE_URL}/verification/recruiter/${data.candidate_id}?recruiter_id=${user.id}`)
+            .then((res) => (res.ok ? res.json() : []))
+            .then((docs) => setVerificationDocs(docs || []))
+            .catch(() => setVerificationDocs([]));
+        }
       })
       .finally(() => setLoading(false));
+  }
+
+  function loadQuestions() {
+    fetch(`${BASE_URL}/interview/questions/${applicationId}`)
+      .then((res) => res.json())
+      .then((data) => setQuestions(data.questions_by_category || {}));
+  }
+
+  async function loadFeedback() {
+    try {
+      const res = await fetch(`${BASE_URL}/interview/feedback/${applicationId}?recruiter_id=${user.id}`);
+      const data = await res.json();
+      if (data) {
+        setFeedback(data);
+        setFeedbackDraft({
+          technical_competency: data.technical_competency || 0,
+          communication: data.communication || 0,
+          problem_solving: data.problem_solving || 0,
+          job_knowledge: data.job_knowledge || 0,
+          overall_feedback: data.overall_feedback || "",
+          recommendation: data.recommendation || "",
+        });
+      }
+    } catch {
+      // No feedback yet -- fine, form stays at defaults
+    }
   }
 
   async function loadEvaluationReport() {
@@ -140,12 +224,67 @@ function CandidateDetail() {
       });
       const data = await res.json();
       if (res.ok) {
-        setQuestions(data.questions);
+        setQuestions(data.questions_by_category || {});
       } else {
         alert(data.detail || "Couldn't generate questions.");
       }
     } finally {
       setGeneratingQuestions(false);
+    }
+  }
+
+  async function updateQuestion(id, text) {
+    await fetch(`${BASE_URL}/interview/questions/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question_text: text }),
+    });
+  }
+
+  async function deleteQuestion(id) {
+    await fetch(`${BASE_URL}/interview/questions/${id}`, { method: "DELETE" });
+    loadQuestions();
+  }
+
+  async function addCustomQuestion() {
+    if (!newQuestionText.trim()) return;
+    await fetch(`${BASE_URL}/interview/questions/${applicationId}/add`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question_text: newQuestionText, category: newQuestionCategory }),
+    });
+    setNewQuestionText("");
+    loadQuestions();
+  }
+
+  async function saveFeedback() {
+    setSavingFeedback(true);
+    try {
+      await fetch(`${BASE_URL}/interview/feedback/${applicationId}?recruiter_id=${user.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(feedbackDraft),
+      });
+      await loadFeedback();
+    } finally {
+      setSavingFeedback(false);
+    }
+  }
+
+  async function summarizeFeedback() {
+    setSummarizingFeedback(true);
+    try {
+      const res = await fetch(`${BASE_URL}/interview/feedback/${applicationId}/summarize?recruiter_id=${user.id}`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setFeedback((prev) => ({ ...prev, ai_summary: data.ai_summary }));
+      } else {
+        alert(data.detail || "Couldn't summarize feedback.");
+      }
+    } finally {
+      setSummarizingFeedback(false);
     }
   }
 
@@ -297,15 +436,64 @@ function CandidateDetail() {
         <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl mb-6">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-text font-display text-lg">CV-JD Match Detail</h2>
-            {application.jd_match?.alignment_score !== undefined && application.jd_match?.alignment_score !== null && (
-              <span className={`text-sm font-semibold px-3 py-1 rounded-full border ${scoreColor(application.jd_match.alignment_score)}`}>
-                {application.jd_match.alignment_score}% alignment
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {application.cv_analysis && (
+                <a
+                  href={`${BASE_URL}/candidate/resume/${application.candidate_id}?recruiter_id=${user.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-gold hover:text-gold-dim border border-gold/30 px-2.5 py-1 rounded-full"
+                >
+                  View Resume
+                </a>
+              )}
+              {application.jd_match?.alignment_score !== undefined && application.jd_match?.alignment_score !== null && (
+                <span className={`text-sm font-semibold px-3 py-1 rounded-full border ${scoreColor(application.jd_match.alignment_score)}`}>
+                  {application.jd_match.alignment_score}% alignment
+                </span>
+              )}
+            </div>
           </div>
 
           {application.jd_match?.summary && (
             <p className="text-muted text-sm leading-relaxed mb-4">{application.jd_match.summary}</p>
+          )}
+
+          {(application.jd_match?.strong_matches?.length > 0 ||
+            application.jd_match?.partial_matches?.length > 0 ||
+            application.jd_match?.missing_requirements?.length > 0) && (
+            <div className="grid grid-cols-3 gap-3 mb-4 text-xs">
+              {application.jd_match.strong_matches?.length > 0 && (
+                <div>
+                  <p className="text-success uppercase tracking-wide mb-1.5">Strong Matches</p>
+                  {application.jd_match.strong_matches.map((m, i) => (
+                    <span key={i} className="inline-block bg-success/10 text-success border border-success/30 px-2 py-0.5 rounded-full mr-1 mb-1">
+                      {m}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {application.jd_match.partial_matches?.length > 0 && (
+                <div>
+                  <p className="text-gold uppercase tracking-wide mb-1.5">Partial Matches</p>
+                  {application.jd_match.partial_matches.map((m, i) => (
+                    <span key={i} className="inline-block bg-gold/10 text-gold border border-gold/30 px-2 py-0.5 rounded-full mr-1 mb-1">
+                      {m}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {application.jd_match.missing_requirements?.length > 0 && (
+                <div>
+                  <p className="text-danger uppercase tracking-wide mb-1.5">Missing</p>
+                  {application.jd_match.missing_requirements.map((m, i) => (
+                    <span key={i} className="inline-block bg-danger/10 text-danger border border-danger/30 px-2 py-0.5 rounded-full mr-1 mb-1">
+                      {m}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
 
           {application.jd_match?.requirements?.length > 0 && (
@@ -373,6 +561,48 @@ function CandidateDetail() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Module 8 -- consolidated AI Summary across CV match + all 3 tests */}
+      {evalReport?.candidate_summary && (
+        <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-text font-display text-lg">AI Summary</h2>
+            <span className="text-xs text-gold font-medium">AI Recommendation: Recruiter Review Required</span>
+          </div>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            {evalReport.candidate_summary.overall_strengths?.length > 0 && (
+              <div>
+                <p className="text-xs text-success uppercase tracking-wide mb-1.5">Strengths</p>
+                <ul className="list-disc list-inside text-text">
+                  {evalReport.candidate_summary.overall_strengths.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              </div>
+            )}
+            {evalReport.candidate_summary.areas_to_explore?.length > 0 && (
+              <div>
+                <p className="text-xs text-gold uppercase tracking-wide mb-1.5">Areas to Explore</p>
+                <ul className="list-disc list-inside text-text">
+                  {evalReport.candidate_summary.areas_to_explore.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              </div>
+            )}
+            {evalReport.candidate_summary.skills_demonstrated?.length > 0 && (
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wide mb-1.5">Skills Demonstrated</p>
+                <p className="text-text">{evalReport.candidate_summary.skills_demonstrated.join(", ")}</p>
+              </div>
+            )}
+            {evalReport.candidate_summary.suggested_interview_topics?.length > 0 && (
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wide mb-1.5">Suggested Interview Topics</p>
+                <ul className="list-disc list-inside text-text">
+                  {evalReport.candidate_summary.suggested_interview_topics.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -553,7 +783,7 @@ function CandidateDetail() {
         )}
       </div>
 
-      {/* Interview questions */}
+      {/* Module 9 -- Interview Questions, categorized and editable */}
       <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl mb-6">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-text font-display text-lg">Interview Questions</h2>
@@ -562,19 +792,151 @@ function CandidateDetail() {
             disabled={generatingQuestions}
             className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gold/40 text-gold hover:bg-gold/10 transition disabled:opacity-50"
           >
-            {generatingQuestions ? "Generating..." : questions.length ? "Regenerate" : "Generate Questions"}
+            {generatingQuestions ? "Generating..." : Object.keys(questions).length ? "Regenerate" : "Generate Questions"}
           </button>
         </div>
-        {questions.length === 0 ? (
+
+        {Object.keys(questions).length === 0 ? (
           <p className="text-muted text-sm">No questions generated yet.</p>
         ) : (
-          <ol className="list-decimal list-inside text-sm text-muted space-y-2">
-            {questions.map((q, i) => (
-              <li key={i} className="text-text/90">{q}</li>
+          <div className="flex flex-col gap-4">
+            {Object.entries(questions).map(([category, qList]) => (
+              <div key={category}>
+                <p className="text-xs text-muted uppercase tracking-wide mb-2">{CATEGORY_LABELS[category] || category}</p>
+                <div className="flex flex-col gap-2">
+                  {qList.map((q) => (
+                    <EditableQuestion key={q.id} q={q} onSave={updateQuestion} onDelete={deleteQuestion} />
+                  ))}
+                </div>
+              </div>
             ))}
-          </ol>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 mt-4 pt-4 border-t border-border">
+          <select
+            value={newQuestionCategory}
+            onChange={(e) => setNewQuestionCategory(e.target.value)}
+            className="text-xs px-2 py-1.5 rounded-lg bg-surface-2 border border-border text-text"
+          >
+            {Object.entries(CATEGORY_LABELS).map(([key, label]) => (
+              <option key={key} value={key}>{label}</option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={newQuestionText}
+            onChange={(e) => setNewQuestionText(e.target.value)}
+            placeholder="Add your own question..."
+            className="flex-1 text-sm px-2.5 py-1.5 rounded-lg bg-surface-2 border border-border text-text focus:outline-none focus:border-gold"
+          />
+          <button
+            onClick={addCustomQuestion}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-gold hover:bg-gold-dim transition text-ink"
+          >
+            + Add
+          </button>
+        </div>
+      </div>
+
+      {/* Module 9 -- Interview Feedback */}
+      <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl mb-6">
+        <h2 className="text-text font-display text-lg mb-4">Interview Feedback</h2>
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          {[
+            ["technical_competency", "Technical Competency"],
+            ["communication", "Communication"],
+            ["problem_solving", "Problem Solving"],
+            ["job_knowledge", "Job Knowledge"],
+          ].map(([key, label]) => (
+            <div key={key}>
+              <label className="text-xs text-muted uppercase tracking-wide">{label} (1-5)</label>
+              <input
+                type="number"
+                min={0}
+                max={5}
+                value={feedbackDraft[key]}
+                onChange={(e) => setFeedbackDraft((prev) => ({ ...prev, [key]: Number(e.target.value) }))}
+                className="w-full mt-1 px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-text text-sm"
+              />
+            </div>
+          ))}
+        </div>
+        <div className="mb-4">
+          <label className="text-xs text-muted uppercase tracking-wide">Overall Feedback</label>
+          <textarea
+            rows={3}
+            value={feedbackDraft.overall_feedback}
+            onChange={(e) => setFeedbackDraft((prev) => ({ ...prev, overall_feedback: e.target.value }))}
+            className="w-full mt-1 px-3 py-2 rounded-lg bg-surface-2 border border-border text-text text-sm resize-none"
+          />
+        </div>
+        <div className="mb-4">
+          <label className="text-xs text-muted uppercase tracking-wide">Your Recommendation</label>
+          <select
+            value={feedbackDraft.recommendation}
+            onChange={(e) => setFeedbackDraft((prev) => ({ ...prev, recommendation: e.target.value }))}
+            className="w-full mt-1 px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-text text-sm"
+          >
+            <option value="">— Select —</option>
+            <option value="Move Forward">Move Forward</option>
+            <option value="Hold">Hold</option>
+            <option value="Reject">Reject</option>
+          </select>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={saveFeedback}
+            disabled={savingFeedback}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-gold hover:bg-gold-dim transition text-ink disabled:opacity-50"
+          >
+            {savingFeedback ? "Saving..." : "Save Feedback"}
+          </button>
+          <button
+            onClick={summarizeFeedback}
+            disabled={summarizingFeedback || !feedback}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gold/40 text-gold hover:bg-gold/10 transition disabled:opacity-50"
+          >
+            {summarizingFeedback ? "Summarizing..." : "Summarize with AI"}
+          </button>
+        </div>
+        {feedback?.ai_summary && (
+          <p className="text-sm text-text/90 border-l-2 border-gold pl-3 mt-4">{feedback.ai_summary}</p>
         )}
       </div>
+
+      {/* Module 10 -- Candidate Verification (recruiter view) */}
+      {verificationDocs.length > 0 && (
+        <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl mb-6">
+          <h2 className="text-text font-display text-lg mb-1">Verification</h2>
+          <p className="text-xs text-muted/70 mb-4">
+            Self-consistency checks against the candidate's own declared profile info — not an authoritative background check.
+          </p>
+          <div className="flex flex-col gap-2">
+            {verificationDocs.map((doc) => (
+              <div key={doc.id} className="flex items-center justify-between border border-border rounded-lg px-3 py-2">
+                <div>
+                  <p className="text-text text-sm capitalize">{doc.document_type} document</p>
+                  <p className="text-muted text-xs mt-0.5">{doc.comparison_notes}</p>
+                </div>
+                <span
+                  className={`text-xs font-medium px-2.5 py-1 rounded-full border whitespace-nowrap ${
+                    doc.comparison_result === "verified"
+                      ? "text-success bg-success/10 border-success/30"
+                      : doc.comparison_result === "inconsistent"
+                      ? "text-danger bg-danger/10 border-danger/30"
+                      : doc.comparison_result === "needs_review"
+                      ? "text-gold bg-gold/10 border-gold/30"
+                      : "text-muted bg-muted/10 border-border"
+                  }`}
+                >
+                  {doc.comparison_result?.replace("_", " ")}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Email workflow */}
       <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl">

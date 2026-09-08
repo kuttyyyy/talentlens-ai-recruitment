@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models
+from app.integrity_agent import generate_integrity_report
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -80,6 +81,65 @@ def get_recruiter_stats(recruiter_id: int, db: Session = Depends(get_db)):
     else:
         avg_time_to_hire_days = None
 
+    # --- Module 8 additions: assessment pipeline + integrity visibility ---
+    approved_assessments_by_job = {
+        a.job_id: a
+        for a in db.query(models.Assessment).filter(
+            models.Assessment.job_id.in_(job_ids), models.Assessment.status == "approved"
+        ).all()
+    } if job_ids else {}
+
+    assessments_pending = 0
+    assessments_completed = 0
+    practical_tests_completed = 0
+    candidates_requiring_review = 0
+
+    # Batch-fetch every TestAttempt for every one of this recruiter's
+    # applications in ONE query, then group them in Python -- instead of
+    # firing a separate query per application (which is what made this
+    # endpoint slow: N applications = N round trips to the database).
+    application_ids = [a.id for a in applications]
+    all_attempts = (
+        db.query(models.TestAttempt)
+        .join(models.AssessmentTest, models.TestAttempt.assessment_test_id == models.AssessmentTest.id)
+        .filter(models.TestAttempt.application_id.in_(application_ids))
+        .all()
+        if application_ids else []
+    )
+    attempts_by_application = {}
+    for at in all_attempts:
+        attempts_by_application.setdefault(at.application_id, []).append(at)
+
+    for application in applications:
+        assessment = approved_assessments_by_job.get(application.job_id)
+        if application.ai_recommendation == "needs_review":
+            candidates_requiring_review += 1
+
+        if not assessment:
+            continue
+
+        attempts = attempts_by_application.get(application.id, [])
+        submitted_count = sum(1 for at in attempts if at.status == "submitted")
+        if submitted_count >= len(assessment.tests) and len(assessment.tests) > 0:
+            assessments_completed += 1
+        else:
+            assessments_pending += 1
+
+        already_flagged_this_application = False
+        for at in attempts:
+            if at.status == "submitted" and at.assessment_test.test_number == 3:
+                practical_tests_completed += 1
+            # A submitted attempt with any integrity flags also counts as needing review,
+            # even if the CV match itself looked fine. Counted once per application,
+            # but this must never skip checking the REST of that application's attempts
+            # (e.g. still needs to count test 3 above even after test 1 gets flagged).
+            if at.status == "submitted" and not already_flagged_this_application:
+                if generate_integrity_report(at)["flags"]:
+                    candidates_requiring_review += 1
+                    already_flagged_this_application = True
+
+    interviews_scheduled = status_breakdown.get("interview_scheduled", 0)
+
     return {
         "total_jobs": total_jobs,
         "open_jobs": open_jobs,
@@ -90,4 +150,10 @@ def get_recruiter_stats(recruiter_id: int, db: Session = Depends(get_db)):
         "jobs": job_summaries,
         "funnel": funnel,
         "average_time_to_hire_days": avg_time_to_hire_days,
+        "cv_screened": total_applicants,  # CV matching runs automatically at apply time in this system
+        "assessments_pending": assessments_pending,
+        "assessments_completed": assessments_completed,
+        "practical_tests_completed": practical_tests_completed,
+        "candidates_requiring_review": candidates_requiring_review,
+        "interviews_scheduled": interviews_scheduled,
     }

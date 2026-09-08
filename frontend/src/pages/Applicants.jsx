@@ -7,7 +7,7 @@ import { useNavigate } from "react-router-dom";
 import AppShell from "../components/AppShell";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-const STATUS_OPTIONS = ["applied", "shortlisted", "interview_scheduled", "rejected", "hired"];
+const STATUS_OPTIONS = ["applied", "shortlisted", "interview_scheduled", "on_hold", "rejected", "hired"];
 
 function Applicants() {
   const navigate = useNavigate();
@@ -18,6 +18,14 @@ function Applicants() {
   const [loadingJobs, setLoadingJobs] = useState(true);
   const [loadingApplicants, setLoadingApplicants] = useState(false);
   const [acceptingId, setAcceptingId] = useState(null);
+
+  // Module 8 -- Candidate Comparison table (alternate view alongside the card list)
+  const [view, setView] = useState("cards"); // "cards" | "comparison"
+  const [comparisonRows, setComparisonRows] = useState([]);
+  const [loadingComparison, setLoadingComparison] = useState(false);
+  const [sortKey, setSortKey] = useState("overall_score");
+  const [sortDir, setSortDir] = useState("desc");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   // --- job menu / edit state ---
   const [openMenuJobId, setOpenMenuJobId] = useState(null);
@@ -52,12 +60,50 @@ function Applicants() {
 
   function openJob(job) {
     setSelectedJob(job);
+    setView("cards");
     setLoadingApplicants(true);
     fetch(`${BASE_URL}/applications/job/${job.id}`)
       .then((res) => res.json())
       .then((data) => setApplicants(data))
       .finally(() => setLoadingApplicants(false));
   }
+
+  function loadComparison(jobId) {
+    setLoadingComparison(true);
+    fetch(`${BASE_URL}/evaluations/job/${jobId}/comparison?recruiter_id=${user.id}`)
+      .then((res) => res.json())
+      .then((data) => setComparisonRows(data.candidates || []))
+      .finally(() => setLoadingComparison(false));
+  }
+
+  function switchView(nextView) {
+    setView(nextView);
+    if (nextView === "comparison" && selectedJob) {
+      loadComparison(selectedJob.id);
+    }
+  }
+
+  function toggleSort(key) {
+    if (sortKey === key) {
+      setSortDir((prev) => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  }
+
+  const sortedComparisonRows = [...comparisonRows]
+    .filter((r) => statusFilter === "all" || r.status === statusFilter)
+    .sort((a, b) => {
+      const aVal = a[sortKey];
+      const bVal = b[sortKey];
+      if (aVal === null || aVal === undefined) return 1;
+      if (bVal === null || bVal === undefined) return -1;
+      if (typeof aVal === "string") {
+        return sortDir === "asc" ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+      return sortDir === "asc" ? aVal - bVal : bVal - aVal;
+    });
 
   async function updateStatus(applicationId, newStatus) {
     setApplicants((prev) =>
@@ -381,11 +427,118 @@ function Applicants() {
 
       <p className="font-mono text-xs text-gold tracking-widest mb-2">RECRUITER</p>
       <h1 className="font-display text-3xl text-text mb-2">{selectedJob.title}</h1>
-      <p className="text-muted mb-8">
+      <p className="text-muted mb-4">
         {applicants.length} applicant{applicants.length !== 1 ? "s" : ""}, ranked by AI match score
       </p>
 
-      {loadingApplicants ? (
+      <div className="flex gap-2 mb-6">
+        <button
+          onClick={() => switchView("cards")}
+          className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition ${
+            view === "cards" ? "bg-gold text-ink border-gold" : "border-border text-muted hover:text-text"
+          }`}
+        >
+          Card View
+        </button>
+        <button
+          onClick={() => switchView("comparison")}
+          className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition ${
+            view === "comparison" ? "bg-gold text-ink border-gold" : "border-border text-muted hover:text-text"
+          }`}
+        >
+          Comparison Table
+        </button>
+      </div>
+
+      {view === "comparison" ? (
+        <div className="max-w-4xl">
+          <div className="flex items-center gap-2 mb-4">
+            <label className="text-xs text-muted uppercase tracking-wide">Filter status:</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-surface-2 border border-border text-text"
+            >
+              <option value="all">All</option>
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s.replace("_", " ")}</option>
+              ))}
+            </select>
+          </div>
+
+          {loadingComparison ? (
+            <p className="text-muted text-sm">Loading comparison...</p>
+          ) : sortedComparisonRows.length === 0 ? (
+            <div className="bg-surface border border-border rounded-xl p-6">
+              <p className="text-muted text-sm">No candidates match this filter.</p>
+            </div>
+          ) : (
+            <div className="bg-surface border border-border rounded-xl overflow-hidden overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-muted text-xs uppercase tracking-wide">
+                    <th className="text-left px-4 py-3">Candidate</th>
+                    {[
+                      ["jd_match_score", "JD Match"],
+                      ["test1_score", "Test 1"],
+                      ["test2_score", "Test 2"],
+                      ["test3_score", "Test 3"],
+                      ["overall_score", "Overall"],
+                    ].map(([key, label]) => (
+                      <th
+                        key={key}
+                        onClick={() => toggleSort(key)}
+                        className="text-left px-4 py-3 cursor-pointer hover:text-text select-none"
+                      >
+                        {label} {sortKey === key ? (sortDir === "desc" ? "▾" : "▴") : ""}
+                      </th>
+                    ))}
+                    <th className="text-left px-4 py-3">Integrity</th>
+                    <th className="text-left px-4 py-3">Status</th>
+                    <th className="text-right px-4 py-3"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedComparisonRows.map((row) => (
+                    <tr key={row.application_id} className="border-b border-border last:border-0">
+                      <td className="px-4 py-3 text-text">{row.candidate_name}</td>
+                      <td className="px-4 py-3 text-text">{row.jd_match_score !== null ? `${row.jd_match_score}%` : "—"}</td>
+                      <td className="px-4 py-3 text-text">{row.test1_score !== null ? row.test1_score : "—"}</td>
+                      <td className="px-4 py-3 text-text">{row.test2_score !== null ? row.test2_score : "—"}</td>
+                      <td className="px-4 py-3 text-text">{row.test3_score !== null ? row.test3_score : "—"}</td>
+                      <td className="px-4 py-3 text-text font-medium">{row.overall_score !== null ? row.overall_score : "—"}</td>
+                      <td className="px-4 py-3">
+                        {row.integrity_flag_count > 0 ? (
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full border ${
+                              row.integrity_highest_severity === "high"
+                                ? "text-danger bg-danger/10 border-danger/30"
+                                : "text-gold bg-gold/10 border-gold/30"
+                            }`}
+                          >
+                            {row.integrity_flag_count} flag{row.integrity_flag_count !== 1 ? "s" : ""}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted capitalize">{row.status.replace("_", " ")}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => navigate(`/applicants/${row.application_id}`)}
+                          className="text-gold text-xs hover:underline"
+                        >
+                          View →
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : loadingApplicants ? (
         <p className="text-muted text-sm">Loading applicants...</p>
       ) : applicants.length === 0 ? (
         <div className="bg-surface border border-border rounded-xl p-6 max-w-xl">

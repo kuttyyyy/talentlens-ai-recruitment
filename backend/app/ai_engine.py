@@ -720,3 +720,179 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
 """
     result = _generate_json(prompt, temperature=0.2, max_tokens=2500)
     return None if "error" in result else result
+
+
+# ---------------------------------------------------------------------------
+# Module 8 -- Recruiter Dashboard & Candidate Reports
+# ---------------------------------------------------------------------------
+
+def generate_candidate_summary(jd_match_summary: str, test_summaries: list):
+    """Consolidates the CV-JD match summary and each test's strengths/
+    weaknesses/skills into one holistic AI Summary for the candidate
+    report -- plus a short list of topics worth exploring further at
+    interview. This does not replace Module 9's full interview-question
+    generator; it's a lightweight pointer for the recruiter reading the report."""
+    if not client:
+        return None
+
+    prompt = f"""You are summarizing one job candidate's full assessment results
+for a recruiter who is about to decide whether to move them forward.
+
+CV-JD MATCH SUMMARY:
+{jd_match_summary or "(not available)"}
+
+TEST RESULTS SO FAR:
+{json.dumps(test_summaries)}
+
+Write a short, honest, consolidated summary. Do not recommend hiring or
+rejecting -- only summarize what the evidence shows so far.
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "overall_strengths": ["strength 1", "strength 2", "strength 3"],
+  "areas_to_explore": ["area 1", "area 2"],
+  "skills_demonstrated": ["skill 1", "skill 2", "skill 3"],
+  "suggested_interview_topics": ["topic 1", "topic 2", "topic 3"]
+}}
+"""
+    result = _generate_json(prompt, temperature=0.3, max_tokens=1200)
+    return None if "error" in result else result
+
+
+# ---------------------------------------------------------------------------
+# Module 9 -- Interview & Selection Management
+# ---------------------------------------------------------------------------
+
+def generate_categorized_interview_questions(
+    job_title: str,
+    job_description: str,
+    resume_text: str,
+    jd_match: dict,
+    test_summaries: list,
+):
+    """Generates interview questions across 5 categories, using everything
+    available about this candidate so far: the JD, their CV, the CV-JD
+    matching results, and their test performance -- specifically targeting
+    areas the evidence says are worth probing further, not generic
+    questions that could apply to anyone."""
+    if not client:
+        return None
+
+    prompt = f"""You are an expert interviewer preparing questions for one
+specific candidate for one specific role, using everything known about them
+so far.
+
+JOB TITLE: {job_title}
+JOB DESCRIPTION: {job_description}
+
+CANDIDATE'S RESUME:
+\"\"\"
+{resume_text[:4000] if resume_text else "(not available)"}
+\"\"\"
+
+CV-JD MATCHING RESULTS (missing/partial requirements are worth probing):
+{json.dumps(jd_match)[:2000]}
+
+TEST RESULTS SO FAR (weaknesses/areas to explore are worth probing):
+{json.dumps(test_summaries)[:3000]}
+
+Write interview questions in these 5 categories. Make them specific to
+THIS candidate and THIS role -- reference their actual gaps, strengths, or
+test performance where relevant, not generic questions.
+
+- Technical: 3 questions testing role-specific technical depth
+- Behavioral: 2 questions about past behavior/experience (STAR-style)
+- Situational: 2 hypothetical workplace scenario questions for this role
+- CV-Based: 2 questions specifically about something in their resume/CV
+- Role-Specific: 2 questions about fit for this particular role's day-to-day work
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "technical": ["question 1", "question 2", "question 3"],
+  "behavioral": ["question 1", "question 2"],
+  "situational": ["question 1", "question 2"],
+  "cv_based": ["question 1", "question 2"],
+  "role_specific": ["question 1", "question 2"]
+}}
+"""
+    result = _generate_json(prompt, temperature=0.4, max_tokens=2500)
+    return None if "error" in result else result
+
+
+def summarize_interview_feedback(feedback: dict):
+    """Summarizes a recruiter's own interview feedback into a short
+    narrative. This NEVER produces a hire/reject decision -- it only
+    reflects back what the recruiter already recorded, in prose."""
+    if not client:
+        return None
+
+    prompt = f"""A recruiter just finished interviewing a candidate and
+recorded this feedback:
+
+Technical competency (1-5): {feedback.get('technical_competency')}
+Communication (1-5): {feedback.get('communication')}
+Problem solving (1-5): {feedback.get('problem_solving')}
+Job knowledge (1-5): {feedback.get('job_knowledge')}
+Recruiter's notes: {feedback.get('overall_feedback', '(none)')}
+Recruiter's own recommendation: {feedback.get('recommendation', '(not specified)')}
+
+Write a 2-3 sentence summary of this feedback, in plain professional
+language. Only reflect what the recruiter actually said -- do not add a
+hiring recommendation of your own, do not second-guess the recruiter's
+recommendation, and do not invent details not present above.
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{"summary": "..."}}
+"""
+    result = _generate_json(prompt, temperature=0.2, max_tokens=400)
+    return None if "error" in result else result.get("summary")
+
+
+# ---------------------------------------------------------------------------
+# Module 10 -- Candidate Verification
+# ---------------------------------------------------------------------------
+
+def compare_document_to_declared_info(document_type: str, extracted_text: str, declared_info: str):
+    """Compares an uploaded document (e.g. a degree certificate or
+    employment letter) against what the candidate themselves declared on
+    their profile. This is a self-consistency check only -- there is no
+    connection to any authoritative third-party verification source, and
+    the result must never overstate what was actually checked."""
+    if not client:
+        return None
+
+    prompt = f"""You are checking whether a document a candidate uploaded is
+CONSISTENT with information they separately declared on their own profile.
+This is NOT an authoritative background check -- there is no external
+database being checked, only a comparison between two things the candidate
+themselves provided.
+
+DOCUMENT TYPE: {document_type}
+
+TEXT EXTRACTED FROM THE UPLOADED DOCUMENT:
+\"\"\"
+{extracted_text[:4000]}
+\"\"\"
+
+WHAT THE CANDIDATE DECLARED ON THEIR PROFILE:
+\"\"\"
+{declared_info[:2000]}
+\"\"\"
+
+Compare specific, checkable facts: institution/company names, degree/role
+titles, and especially dates. Choose exactly one result:
+- "verified": the document's facts clearly and specifically match what was declared
+- "inconsistent": the document contradicts what was declared (e.g. different dates, different employer)
+- "needs_review": there's partial overlap but something is ambiguous or incomplete
+- "unable_to_verify": the document doesn't contain enough relevant information to compare at all
+
+Default to "needs_review" or "unable_to_verify" rather than "verified" unless the match is genuinely clear and specific.
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "result": "verified" or "inconsistent" or "needs_review" or "unable_to_verify",
+  "notes": "1-2 sentences citing the specific facts compared and why this result was chosen"
+}}
+"""
+    result = _generate_json(prompt, temperature=0.1, max_tokens=500)
+    return None if "error" in result else result

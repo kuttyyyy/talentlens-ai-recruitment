@@ -6,7 +6,8 @@ import json
 import os
 import shutil
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
-from sqlalchemy.orm import Session
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app import models, schemas
 from app.resume_parser import parse_resume
@@ -171,6 +172,7 @@ def get_candidate_dashboard(user_id: int, db: Session = Depends(get_db)):
 
     applications = (
         db.query(models.Application)
+        .options(joinedload(models.Application.job))
         .filter(models.Application.candidate_id == user_id)
         .order_by(models.Application.applied_at.desc())
         .all()
@@ -207,3 +209,24 @@ def get_candidate_dashboard(user_id: int, db: Session = Depends(get_db)):
         "assessments_upcoming": [],
         "notifications": notifications,
     }
+
+
+@router.get("/resume/{user_id}")
+def get_resume_file(user_id: int, recruiter_id: int, db: Session = Depends(get_db)):
+    """Module 8 -- lets a recruiter open/download a candidate's resume
+    from the candidate report. Only a recruiter who has actually received
+    an application from this candidate can access it."""
+    profile = _get_profile_or_404(user_id, db)
+    if not profile.resume_file_path or not os.path.exists(profile.resume_file_path):
+        raise HTTPException(status_code=404, detail="No resume on file for this candidate")
+
+    has_application = (
+        db.query(models.Application)
+        .join(models.Job, models.Application.job_id == models.Job.id)
+        .filter(models.Application.candidate_id == user_id, models.Job.recruiter_id == recruiter_id)
+        .first()
+    )
+    if not has_application:
+        raise HTTPException(status_code=403, detail="This candidate hasn't applied to any of your jobs")
+
+    return FileResponse(profile.resume_file_path)

@@ -18,6 +18,9 @@ from app.routers import (
     assessment_routes,
     test_attempt_routes,
     evaluation_routes,
+    verification_routes,
+    feedback_routes,
+    admin_portal_routes,
 )
 
 app = FastAPI(title="AI Recruitment System API")
@@ -64,6 +67,51 @@ def auto_migrate(engine, Base):
 auto_migrate(engine, Base)
 
 
+# ==========================================================
+# AUTO-INDEXING: creates any missing database indexes on
+# startup, same self-healing pattern as auto_migrate() above.
+# SQLAlchemy's create_all() only adds indexes to BRAND NEW
+# tables -- it never retroactively indexes a column on a table
+# that already exists, which is exactly the situation on an
+# existing deployed database. This fixes that automatically,
+# without requiring a manual migration step.
+# ==========================================================
+def auto_index(engine, Base):
+    inspector = inspect(engine)
+    existing_tables = inspector.get_table_names()
+
+    with engine.connect() as conn:
+        for table_name, table in Base.metadata.tables.items():
+            if table_name not in existing_tables:
+                continue
+
+            existing_index_columns = set()
+            for idx in inspector.get_indexes(table_name):
+                existing_index_columns.update(idx["column_names"])
+            # Also treat the primary key as "already indexed" -- it always is.
+            pk_columns = set(inspector.get_pk_constraint(table_name).get("constrained_columns", []))
+            existing_index_columns |= pk_columns
+
+            for column in table.columns:
+                if not column.index:
+                    continue
+                if column.name in existing_index_columns:
+                    continue
+
+                index_name = f"ix_{table_name}_{column.name}"
+                ddl = f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "{table_name}" ("{column.name}")'
+
+                try:
+                    conn.execute(text(ddl))
+                    conn.commit()
+                    print(f"[auto_index] Added missing index: {table_name}.{column.name}")
+                except Exception as e:
+                    print(f"[auto_index] Skipped {table_name}.{column.name}: {e}")
+
+
+auto_index(engine, Base)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -84,6 +132,9 @@ app.include_router(copilot_routes.router)
 app.include_router(assessment_routes.router)
 app.include_router(test_attempt_routes.router)
 app.include_router(evaluation_routes.router)
+app.include_router(verification_routes.router)
+app.include_router(feedback_routes.router)
+app.include_router(admin_portal_routes.router)
 
 
 @app.get("/")
