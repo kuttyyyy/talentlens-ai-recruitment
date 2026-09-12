@@ -24,25 +24,33 @@ function EditableQuestion({ q, onSave, onDelete }) {
   const [dirty, setDirty] = useState(false);
 
   return (
-    <div className="flex items-start gap-2">
-      <textarea
-        value={text}
-        rows={2}
-        onChange={(e) => {
-          setText(e.target.value);
-          setDirty(true);
-        }}
-        onBlur={() => {
-          if (dirty) {
-            onSave(q.id, text);
-            setDirty(false);
-          }
-        }}
-        className="flex-1 text-sm px-2.5 py-1.5 rounded-md bg-surface-2 border border-border text-text resize-none focus:outline-none focus:border-gold"
-      />
-      <button onClick={() => onDelete(q.id)} className="text-muted hover:text-danger text-xs px-1 mt-1.5">
-        ✕
-      </button>
+    <div>
+      <div className="flex items-start gap-2">
+        <textarea
+          value={text}
+          rows={2}
+          onChange={(e) => {
+            setText(e.target.value);
+            setDirty(true);
+          }}
+          onBlur={() => {
+            if (dirty) {
+              onSave(q.id, text);
+              setDirty(false);
+            }
+          }}
+          className="flex-1 text-sm px-2.5 py-1.5 rounded-md bg-surface-2 border border-border text-text resize-none focus:outline-none focus:border-gold"
+        />
+        <button onClick={() => onDelete(q.id)} className="text-muted hover:text-danger text-xs px-1 mt-1.5">
+          ✕
+        </button>
+      </div>
+      {q.candidate_answer && (
+        <div className="ml-1 mt-1.5 pl-3 border-l-2 border-gold/40">
+          <p className="text-[10px] text-gold uppercase tracking-wide">Candidate's answer</p>
+          <p className="text-text/90 text-sm">{q.candidate_answer}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -61,8 +69,14 @@ function CandidateDetail() {
   const [evaluating, setEvaluating] = useState(false);
   const [evalError, setEvalError] = useState("");
   const [editingWeights, setEditingWeights] = useState(false);
-  const [weightDraft, setWeightDraft] = useState({ test1_weight: 30, test2_weight: 25, test3_weight: 45 });
+  const [weightDraft, setWeightDraft] = useState({ test1_weight: 30, test2_weight: 25, test3_weight: 45, cv_match_weight: 30 });
   const [savingWeights, setSavingWeights] = useState(false);
+
+  // Module 3 -- sharing the overall score + feedback with the candidate
+  const [shareFeedbackDraft, setShareFeedbackDraft] = useState("");
+  const [editingShare, setEditingShare] = useState(false);
+  const [sharingScore, setSharingScore] = useState(false);
+  const [shareError, setShareError] = useState("");
 
   const [questions, setQuestions] = useState({}); // { category: [{id, question_text}] }
   const [newQuestionCategory, setNewQuestionCategory] = useState("general");
@@ -76,9 +90,22 @@ function CandidateDetail() {
   });
   const [savingFeedback, setSavingFeedback] = useState(false);
   const [summarizingFeedback, setSummarizingFeedback] = useState(false);
+  const [sendingInterview, setSendingInterview] = useState(false);
+  const [sendInterviewError, setSendInterviewError] = useState("");
+  const [evaluatingWithAI, setEvaluatingWithAI] = useState(false);
+  const [sharingFeedback, setSharingFeedback] = useState(false);
+  const [feedbackShareError, setFeedbackShareError] = useState("");
 
   // Module 10 -- verification documents (recruiter view)
   const [verificationDocs, setVerificationDocs] = useState([]);
+  const [verificationSummary, setVerificationSummary] = useState(null);
+  const [verificationError, setVerificationError] = useState("");
+  const [callScripts, setCallScripts] = useState({}); // { [docId]: script }
+  const [loadingScriptId, setLoadingScriptId] = useState(null);
+  const [phoneEditId, setPhoneEditId] = useState(null);
+  const [phoneStatusDraft, setPhoneStatusDraft] = useState("confirmed");
+  const [phoneNotesDraft, setPhoneNotesDraft] = useState("");
+  const [savingPhoneId, setSavingPhoneId] = useState(null);
   const [generatingQuestions, setGeneratingQuestions] = useState(false);
 
   const [companyName, setCompanyName] = useState("Our Company");
@@ -106,9 +133,24 @@ function CandidateDetail() {
         setApplication(data);
         if (data.candidate_id) {
           fetch(`${BASE_URL}/verification/recruiter/${data.candidate_id}?recruiter_id=${user.id}`)
-            .then((res) => (res.ok ? res.json() : []))
-            .then((docs) => setVerificationDocs(docs || []))
-            .catch(() => setVerificationDocs([]));
+            .then(async (res) => {
+              if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.detail || "Verification info unavailable");
+              }
+              return res.json();
+            })
+            .then((result) => {
+              // Backend returns { summary, documents } -- not a bare array.
+              setVerificationDocs(result?.documents || []);
+              setVerificationSummary(result?.summary || null);
+              setVerificationError("");
+            })
+            .catch((err) => {
+              setVerificationDocs([]);
+              setVerificationSummary(null);
+              setVerificationError(err.message || "");
+            });
         }
       })
       .finally(() => setLoading(false));
@@ -152,8 +194,10 @@ function CandidateDetail() {
             test1_weight: data.weights["1"] ?? 30,
             test2_weight: data.weights["2"] ?? 25,
             test3_weight: data.weights["3"] ?? 45,
+            cv_match_weight: data.cv_match_weight ?? 30,
           });
         }
+        setShareFeedbackDraft(data.recruiter_score_feedback || "");
       }
     } catch {
       // Non-fatal -- the rest of the page still works without this
@@ -207,6 +251,29 @@ function CandidateDetail() {
     }
   }
 
+  async function shareScoreWithCandidate() {
+    setSharingScore(true);
+    setShareError("");
+    try {
+      const res = await fetch(
+        `${BASE_URL}/evaluations/application/${applicationId}/share-score?recruiter_id=${user.id}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ feedback: shareFeedbackDraft }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to share score");
+      setEditingShare(false);
+      await loadEvaluationReport();
+    } catch (err) {
+      setShareError(err.message);
+    } finally {
+      setSharingScore(false);
+    }
+  }
+
   async function updateStatus(newStatus) {
     setApplication((prev) => ({ ...prev, status: newStatus }));
     await fetch(`${BASE_URL}/applications/${applicationId}/status`, {
@@ -214,6 +281,54 @@ function CandidateDetail() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: newStatus }),
     });
+  }
+
+  async function viewCallScript(docId) {
+    setLoadingScriptId(docId);
+    try {
+      const res = await fetch(`${BASE_URL}/verification/call-script/${docId}?recruiter_id=${user.id}`);
+      const data = await res.json();
+      if (res.ok) {
+        setCallScripts((prev) => ({ ...prev, [docId]: data }));
+      } else {
+        alert(data.detail || "Couldn't load the call script.");
+      }
+    } finally {
+      setLoadingScriptId(null);
+    }
+  }
+
+  function startPhoneVerification(doc) {
+    setPhoneEditId(doc.id);
+    setPhoneStatusDraft(
+      doc.phone_verification_status && doc.phone_verification_status !== "not_started"
+        ? doc.phone_verification_status
+        : "confirmed"
+    );
+    setPhoneNotesDraft(doc.phone_verification_notes || "");
+  }
+
+  async function savePhoneVerification(docId) {
+    setSavingPhoneId(docId);
+    try {
+      const res = await fetch(
+        `${BASE_URL}/verification/${docId}/phone-verification?recruiter_id=${user.id}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: phoneStatusDraft, notes: phoneNotesDraft }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.detail || "Couldn't save the verification call outcome.");
+        return;
+      }
+      setVerificationDocs((prev) => prev.map((d) => (d.id === docId ? data : d)));
+      setPhoneEditId(null);
+    } finally {
+      setSavingPhoneId(null);
+    }
   }
 
   async function generateQuestions() {
@@ -230,6 +345,23 @@ function CandidateDetail() {
       }
     } finally {
       setGeneratingQuestions(false);
+    }
+  }
+
+  async function sendInterview() {
+    setSendingInterview(true);
+    setSendInterviewError("");
+    try {
+      const res = await fetch(`${BASE_URL}/interview/send/${applicationId}?recruiter_id=${user.id}`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to send interview");
+      await loadApplication();
+    } catch (err) {
+      setSendInterviewError(err.message);
+    } finally {
+      setSendingInterview(false);
     }
   }
 
@@ -285,6 +417,40 @@ function CandidateDetail() {
       }
     } finally {
       setSummarizingFeedback(false);
+    }
+  }
+
+  async function evaluateInterviewWithAI() {
+    setEvaluatingWithAI(true);
+    try {
+      const res = await fetch(`${BASE_URL}/interview/feedback/${applicationId}/evaluate-with-ai?recruiter_id=${user.id}`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (res.ok) {
+        await loadFeedback();
+      } else {
+        alert(data.detail || "Couldn't evaluate the interview with AI.");
+      }
+    } finally {
+      setEvaluatingWithAI(false);
+    }
+  }
+
+  async function shareInterviewFeedback() {
+    setSharingFeedback(true);
+    setFeedbackShareError("");
+    try {
+      const res = await fetch(`${BASE_URL}/interview/feedback/${applicationId}/share?recruiter_id=${user.id}`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to share feedback");
+      await loadFeedback();
+    } catch (err) {
+      setFeedbackShareError(err.message);
+    } finally {
+      setSharingFeedback(false);
     }
   }
 
@@ -640,6 +806,12 @@ function CandidateDetail() {
                 <p className="font-display text-3xl text-text">
                   {evalReport.overall_score !== null ? `${evalReport.overall_score} / 100` : "—"}
                 </p>
+                <p className="text-xs text-muted mt-1">
+                  {evalReport.cv_match_weight}% CV-JD match
+                  {evalReport.cv_match_score !== null ? ` (${evalReport.cv_match_score}%)` : " (not yet scored)"}
+                  {" "}+ {100 - evalReport.cv_match_weight}% assessments
+                  {evalReport.assessment_score !== null ? ` (${evalReport.assessment_score}/100)` : " (not yet scored)"}
+                </p>
               </div>
               <div className="text-right">
                 <p className="text-xs text-muted uppercase tracking-wide">Recommendation</p>
@@ -650,7 +822,7 @@ function CandidateDetail() {
             {/* Weight editor */}
             <div className="mb-4">
               {editingWeights ? (
-                <div className="flex items-end gap-3">
+                <div className="flex flex-wrap items-end gap-3">
                   {["test1_weight", "test2_weight", "test3_weight"].map((key, i) => (
                     <div key={key}>
                       <label className="text-[10px] text-muted uppercase">Test {i + 1} %</label>
@@ -662,6 +834,15 @@ function CandidateDetail() {
                       />
                     </div>
                   ))}
+                  <div>
+                    <label className="text-[10px] text-muted uppercase">CV-JD match %</label>
+                    <input
+                      type="number"
+                      value={weightDraft.cv_match_weight}
+                      onChange={(e) => setWeightDraft((prev) => ({ ...prev, cv_match_weight: Number(e.target.value) }))}
+                      className="w-16 px-2 py-1 rounded-md bg-surface-2 border border-border text-text text-sm"
+                    />
+                  </div>
                   <button
                     onClick={saveWeights}
                     disabled={savingWeights}
@@ -679,8 +860,71 @@ function CandidateDetail() {
               ) : (
                 <button onClick={() => setEditingWeights(true)} className="text-xs text-gold hover:text-gold-dim">
                   Weights: Test 1 {evalReport.weights?.["1"]}% · Test 2 {evalReport.weights?.["2"]}% · Test 3{" "}
-                  {evalReport.weights?.["3"]}% (edit)
+                  {evalReport.weights?.["3"]}% of assessments · CV-JD match {evalReport.cv_match_weight}% of overall (edit)
                 </button>
+              )}
+            </div>
+
+            {/* Module 3 -- share score/feedback with the candidate */}
+            <div className="mb-6 border border-border rounded-lg p-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-text text-sm font-medium">Candidate-facing feedback</p>
+                {evalReport.score_shared && !editingShare && (
+                  <span className="text-xs text-success">
+                    Shared {evalReport.score_shared_at ? new Date(evalReport.score_shared_at).toLocaleDateString() : ""}
+                  </span>
+                )}
+              </div>
+
+              {shareError && <p className="text-danger text-xs mb-2">{shareError}</p>}
+
+              {evalReport.score_shared && !editingShare ? (
+                <div>
+                  <p className="text-text text-sm">
+                    Shared score: <span className="font-semibold">{evalReport.shared_overall_score} / 100</span>
+                  </p>
+                  {evalReport.recruiter_score_feedback && (
+                    <p className="text-muted text-sm mt-1">{evalReport.recruiter_score_feedback}</p>
+                  )}
+                  <button
+                    onClick={() => setEditingShare(true)}
+                    className="text-xs text-gold hover:text-gold-dim mt-2"
+                  >
+                    Update
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-muted text-xs mb-2">
+                    Sharing will show the candidate their current overall score ({evalReport.overall_score ?? "—"}/100)
+                    plus any message you write below, on their My Applications page.
+                  </p>
+                  <textarea
+                    value={shareFeedbackDraft}
+                    onChange={(e) => setShareFeedbackDraft(e.target.value)}
+                    rows={2}
+                    placeholder="Optional message for the candidate..."
+                    className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-border text-text text-sm resize-none focus:outline-none focus:border-gold"
+                  />
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={shareScoreWithCandidate}
+                      disabled={sharingScore || evalReport.overall_score === null}
+                      className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-gold hover:bg-gold-dim transition text-ink disabled:opacity-50"
+                      title={evalReport.overall_score === null ? "Overall score isn't ready yet" : ""}
+                    >
+                      {sharingScore ? "Sharing..." : "Share with Candidate"}
+                    </button>
+                    {editingShare && (
+                      <button
+                        onClick={() => setEditingShare(false)}
+                        className="text-xs text-muted hover:text-text px-2 py-1.5"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
 
@@ -747,6 +991,32 @@ function CandidateDetail() {
                     </div>
                   )}
 
+                  {t.test_type === "practical_simulation" && (
+                    <div className="mt-3 pt-3 border-t border-border">
+                      <p className="text-xs text-muted uppercase tracking-wide mb-1.5">Submitted Files</p>
+                      {t.files?.length > 0 ? (
+                        <div className="flex flex-col gap-1.5">
+                          {t.files.map((f) => (
+                            <a
+                              key={f.id}
+                              href={`${BASE_URL}/test-attempts/file/${f.id}/download?recruiter_id=${user.id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-gold hover:text-gold-dim flex items-center gap-2"
+                            >
+                              📎 {f.original_filename}
+                              <span className="text-muted">
+                                ({f.file_size_bytes ? `${(f.file_size_bytes / 1024).toFixed(0)} KB` : "—"})
+                              </span>
+                            </a>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-muted text-xs">No files uploaded by the candidate.</p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Integrity flags */}
                   {t.integrity_report?.flags?.length > 0 && (
                     <div className="mt-3 pt-3 border-t border-border">
@@ -785,15 +1055,37 @@ function CandidateDetail() {
 
       {/* Module 9 -- Interview Questions, categorized and editable */}
       <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl mb-6">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-1">
           <h2 className="text-text font-display text-lg">Interview Questions</h2>
-          <button
-            onClick={generateQuestions}
-            disabled={generatingQuestions}
-            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gold/40 text-gold hover:bg-gold/10 transition disabled:opacity-50"
-          >
-            {generatingQuestions ? "Generating..." : Object.keys(questions).length ? "Regenerate" : "Generate Questions"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={generateQuestions}
+              disabled={generatingQuestions}
+              className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gold/40 text-gold hover:bg-gold/10 transition disabled:opacity-50"
+            >
+              {generatingQuestions ? "Generating..." : Object.keys(questions).length ? "Regenerate" : "Generate Questions"}
+            </button>
+            <button
+              onClick={sendInterview}
+              disabled={sendingInterview || Object.keys(questions).length === 0}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-gold hover:bg-gold-dim transition text-ink disabled:opacity-50"
+              title={Object.keys(questions).length === 0 ? "Generate questions first" : ""}
+            >
+              {sendingInterview ? "Sending..." : application?.interview_sent ? "Re-send" : "Send"}
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-3">
+          {sendInterviewError && <p className="text-danger text-xs">{sendInterviewError}</p>}
+          {application?.interview_sent && (
+            <p className="text-success text-xs">
+              Sent to candidate {application.interview_sent_at ? new Date(application.interview_sent_at).toLocaleDateString() : ""}
+              {application.interview_answers_submitted_at
+                ? ` · candidate submitted answers ${new Date(application.interview_answers_submitted_at).toLocaleDateString()}`
+                : " · waiting on candidate's answers"}
+            </p>
+          )}
         </div>
 
         {Object.keys(questions).length === 0 ? (
@@ -841,7 +1133,27 @@ function CandidateDetail() {
 
       {/* Module 9 -- Interview Feedback */}
       <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl mb-6">
-        <h2 className="text-text font-display text-lg mb-4">Interview Feedback</h2>
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-text font-display text-lg">Interview Feedback</h2>
+          {feedback?.ai_generated && (
+            <span className="text-xs px-2 py-0.5 rounded-full border border-gold/30 bg-gold/10 text-gold">
+              AI first pass — review before sharing
+            </span>
+          )}
+        </div>
+        <p className="text-muted text-xs mb-4">
+          {application?.interview_answers_submitted_at
+            ? "The candidate has submitted answers — you can get an AI first pass below, or fill this in yourself."
+            : "You can fill this in yourself now, or wait for the candidate's submitted answers and evaluate with AI."}
+        </p>
+        <button
+          onClick={evaluateInterviewWithAI}
+          disabled={evaluatingWithAI || !application?.interview_answers_submitted_at}
+          className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gold/40 text-gold hover:bg-gold/10 transition disabled:opacity-50 mb-4"
+          title={!application?.interview_answers_submitted_at ? "Waiting on the candidate's submitted answers" : ""}
+        >
+          {evaluatingWithAI ? "Evaluating..." : "Evaluate with AI"}
+        </button>
         <div className="grid grid-cols-2 gap-4 mb-4">
           {[
             ["technical_competency", "Technical Competency"],
@@ -884,7 +1196,7 @@ function CandidateDetail() {
             <option value="Reject">Reject</option>
           </select>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={saveFeedback}
             disabled={savingFeedback}
@@ -899,39 +1211,184 @@ function CandidateDetail() {
           >
             {summarizingFeedback ? "Summarizing..." : "Summarize with AI"}
           </button>
+          <button
+            onClick={shareInterviewFeedback}
+            disabled={sharingFeedback || !feedback}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-success/40 text-success hover:bg-success/10 transition disabled:opacity-50"
+          >
+            {sharingFeedback ? "Sharing..." : feedback?.shared_with_candidate ? "Re-share with Candidate" : "Share with Candidate"}
+          </button>
+          {feedback?.shared_with_candidate && (
+            <span className="text-xs text-success">
+              Shared {feedback.shared_at ? new Date(feedback.shared_at).toLocaleDateString() : ""}
+            </span>
+          )}
         </div>
+        {feedbackShareError && <p className="text-danger text-xs mt-2">{feedbackShareError}</p>}
         {feedback?.ai_summary && (
           <p className="text-sm text-text/90 border-l-2 border-gold pl-3 mt-4">{feedback.ai_summary}</p>
         )}
       </div>
 
       {/* Module 10 -- Candidate Verification (recruiter view) */}
+      {verificationError && (
+        <div className="bg-surface border border-border rounded-xl p-4 max-w-2xl mb-6 text-sm text-muted">
+          Verification: {verificationError}
+        </div>
+      )}
+
       {verificationDocs.length > 0 && (
         <div className="bg-surface border border-border rounded-xl p-5 max-w-2xl mb-6">
           <h2 className="text-text font-display text-lg mb-1">Verification</h2>
           <p className="text-xs text-muted/70 mb-4">
-            Self-consistency checks against the candidate's own declared profile info — not an authoritative background check.
+            Self-consistency checks against the candidate's own declared profile info, plus any
+            manual phone verification you've recorded — not an authoritative third-party
+            background check.
           </p>
-          <div className="flex flex-col gap-2">
-            {verificationDocs.map((doc) => (
-              <div key={doc.id} className="flex items-center justify-between border border-border rounded-lg px-3 py-2">
-                <div>
-                  <p className="text-text text-sm capitalize">{doc.document_type} document</p>
-                  <p className="text-muted text-xs mt-0.5">{doc.comparison_notes}</p>
-                </div>
-                <span
-                  className={`text-xs font-medium px-2.5 py-1 rounded-full border whitespace-nowrap ${
-                    doc.comparison_result === "verified"
-                      ? "text-success bg-success/10 border-success/30"
-                      : doc.comparison_result === "inconsistent"
-                      ? "text-danger bg-danger/10 border-danger/30"
-                      : doc.comparison_result === "needs_review"
-                      ? "text-gold bg-gold/10 border-gold/30"
-                      : "text-muted bg-muted/10 border-border"
-                  }`}
-                >
-                  {doc.comparison_result?.replace("_", " ")}
+
+          {verificationSummary && (
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <span className="text-xs px-2.5 py-1 rounded-full border border-border text-muted">
+                {verificationSummary.documents_submitted} document{verificationSummary.documents_submitted === 1 ? "" : "s"} submitted
+              </span>
+              <span className="text-xs px-2.5 py-1 rounded-full border border-success/30 bg-success/10 text-success">
+                {verificationSummary.verified_count} verified
+              </span>
+              {verificationSummary.inconsistent_count > 0 && (
+                <span className="text-xs px-2.5 py-1 rounded-full border border-danger/30 bg-danger/10 text-danger">
+                  {verificationSummary.inconsistent_count} inconsistent
                 </span>
+              )}
+              {verificationSummary.needs_review_count > 0 && (
+                <span className="text-xs px-2.5 py-1 rounded-full border border-gold/30 bg-gold/10 text-gold">
+                  {verificationSummary.needs_review_count} needs review
+                </span>
+              )}
+            </div>
+          )}
+
+          {verificationSummary?.flags?.length > 0 && (
+            <div className="bg-danger/10 border border-danger/30 rounded-lg p-3 mb-4">
+              <p className="text-danger text-xs font-semibold uppercase tracking-wide mb-1.5">Flags for review</p>
+              <ul className="list-disc list-inside space-y-1">
+                {verificationSummary.flags.map((flag, i) => (
+                  <li key={i} className="text-danger text-xs">{flag}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-3">
+            {verificationDocs.map((doc) => (
+              <div key={doc.id} className="border border-border rounded-lg px-3 py-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-text text-sm capitalize">{doc.document_type.replace("_", " ")} document</p>
+                    <p className="text-muted text-xs mt-0.5">{doc.comparison_notes}</p>
+                  </div>
+                  <span
+                    className={`text-xs font-medium px-2.5 py-1 rounded-full border whitespace-nowrap ${
+                      doc.comparison_result === "verified"
+                        ? "text-success bg-success/10 border-success/30"
+                        : doc.comparison_result === "inconsistent"
+                        ? "text-danger bg-danger/10 border-danger/30"
+                        : doc.comparison_result === "needs_review"
+                        ? "text-gold bg-gold/10 border-gold/30"
+                        : "text-muted bg-muted/10 border-border"
+                    }`}
+                  >
+                    {doc.comparison_result?.replace("_", " ")}
+                  </span>
+                </div>
+
+                {doc.duplicate_of_candidate_id && (
+                  <p className="text-danger text-xs mt-2">⚠ This exact file was previously uploaded by a different candidate.</p>
+                )}
+                {doc.metadata_flag && doc.metadata_notes && (
+                  <p className="text-gold text-xs mt-2">⚠ {doc.metadata_notes}</p>
+                )}
+                {doc.cross_check_notes && (
+                  <p className="text-gold text-xs mt-2">⚠ Cross-document check: {doc.cross_check_notes}</p>
+                )}
+
+                {doc.institution_phone && (
+                  <div className="mt-3 pt-3 border-t border-border">
+                    <p className="text-xs text-muted mb-2">
+                      {doc.institution_name || (doc.document_type === "education" ? "School/college" : "Employer")}
+                      {" "}&middot; {doc.institution_phone}
+                      {doc.institution_contact_name ? ` · ${doc.institution_contact_name}` : ""}
+                    </p>
+                    <p className="text-xs text-muted mb-2">
+                      Phone verification: <span className="text-text capitalize">{(doc.phone_verification_status || "not started").replace("_", " ")}</span>
+                    </p>
+                    {doc.phone_verification_notes && (
+                      <p className="text-muted text-xs mb-2">Notes: {doc.phone_verification_notes}</p>
+                    )}
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => viewCallScript(doc.id)}
+                        disabled={loadingScriptId === doc.id}
+                        className="text-xs font-medium px-3 py-1.5 rounded-lg border border-border text-muted hover:text-text hover:border-gold/40 transition disabled:opacity-50"
+                      >
+                        {loadingScriptId === doc.id ? "Loading..." : "View Call Script"}
+                      </button>
+                      {phoneEditId !== doc.id && (
+                        <button
+                          onClick={() => startPhoneVerification(doc)}
+                          className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gold/40 text-gold hover:bg-gold/10 transition"
+                        >
+                          Record Call Outcome
+                        </button>
+                      )}
+                    </div>
+
+                    {callScripts[doc.id] && (
+                      <ol className="list-decimal list-inside mt-3 space-y-1 bg-ink/40 rounded-lg p-3">
+                        {callScripts[doc.id].script.map((line, i) => (
+                          <li key={i} className="text-text/90 text-xs">{line}</li>
+                        ))}
+                      </ol>
+                    )}
+
+                    {phoneEditId === doc.id && (
+                      <div className="mt-3 bg-ink/40 border border-border rounded-lg p-3 flex flex-col gap-2">
+                        <label className="text-xs text-muted uppercase tracking-wide">What did you hear on the call?</label>
+                        <select
+                          value={phoneStatusDraft}
+                          onChange={(e) => setPhoneStatusDraft(e.target.value)}
+                          className="px-3 py-2 rounded-lg bg-surface-2 border border-border text-text text-sm focus:outline-none focus:border-gold"
+                        >
+                          <option value="confirmed">Confirmed — records match</option>
+                          <option value="could_not_confirm">Could not confirm — no answer / no record</option>
+                          <option value="discrepancy_found">Discrepancy found</option>
+                        </select>
+                        <textarea
+                          value={phoneNotesDraft}
+                          onChange={(e) => setPhoneNotesDraft(e.target.value)}
+                          rows={2}
+                          placeholder="Notes from the call (optional)"
+                          className="px-3 py-2 rounded-lg bg-surface-2 border border-border text-text text-sm resize-none focus:outline-none focus:border-gold"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => savePhoneVerification(doc.id)}
+                            disabled={savingPhoneId === doc.id}
+                            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-gold text-ink hover:bg-gold-dim transition disabled:opacity-50"
+                          >
+                            {savingPhoneId === doc.id ? "Saving..." : "Save Outcome"}
+                          </button>
+                          <button
+                            onClick={() => setPhoneEditId(null)}
+                            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-border text-muted hover:text-text transition"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>

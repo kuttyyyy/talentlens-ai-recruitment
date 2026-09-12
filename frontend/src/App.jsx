@@ -2,7 +2,8 @@
 // This file sets up all the "routes" (pages) in our application.
 // React Router shows a different component depending on the URL.
 
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import LandingPage from "./pages/LandingPage";
 import Register from "./pages/Register";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -15,6 +16,7 @@ import TakeTest from "./pages/TakeTest";
 import PostJob from "./pages/PostJob";
 import BrowseJobs from "./pages/BrowseJobs";
 import MyApplications from "./pages/MyApplications";
+import MyInterview from "./pages/MyInterview";
 import Applicants from "./pages/Applicants";
 import CandidateDetail from "./pages/CandidateDetail";
 import RecruiterDashboard from "./pages/RecruiterDashboard";
@@ -27,12 +29,13 @@ import AdminPortalDashboard from "./pages/AdminPortalDashboard";
 import AdminPortalCompanies from "./pages/AdminPortalCompanies";
 import AdminPortalRecruiters from "./pages/AdminPortalRecruiters";
 import AdminPortalAuditLog from "./pages/AdminPortalAuditLog";
+import AdminPortalFeedback from "./pages/AdminPortalFeedback";
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Navigate to="/login" />} />
+        <Route path="/" element={<LandingPage />} />
         <Route path="/register" element={<Register />} />
         <Route path="/login" element={<Login />} />
         <Route path="/dashboard" element={<Dashboard />} />
@@ -45,6 +48,7 @@ function App() {
         <Route path="/post-job" element={<PostJob />} />
         <Route path="/browse-jobs" element={<BrowseJobs />} />
         <Route path="/my-applications" element={<MyApplications />} />
+        <Route path="/interview/:applicationId" element={<MyInterview />} />
         <Route path="/applicants" element={<Applicants />} />
         <Route path="/applicants/:applicationId" element={<CandidateDetail />} />
         <Route path="/reports" element={<RecruiterDashboard />} />
@@ -61,6 +65,7 @@ function App() {
         <Route path="/admin-portal/companies" element={<AdminPortalCompanies />} />
         <Route path="/admin-portal/recruiters" element={<AdminPortalRecruiters />} />
         <Route path="/admin-portal/audit-log" element={<AdminPortalAuditLog />} />
+        <Route path="/admin-portal/feedback" element={<AdminPortalFeedback />} />
       </Routes>
     </BrowserRouter>
   );

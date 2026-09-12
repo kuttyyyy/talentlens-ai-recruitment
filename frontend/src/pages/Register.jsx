@@ -11,6 +11,7 @@ function Register() {
     email: "",
     password: "",
     role: "candidate",
+    company_name: "",
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -22,9 +23,19 @@ function Register() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+
+    if (form.role === "recruiter" && !form.company_name.trim()) {
+      setError("Please enter your company name.");
+      return;
+    }
+
     setLoading(true);
     try {
-      await apiRequest("/auth/register", "POST", form);
+      const payload = { ...form };
+      if (payload.role !== "recruiter") {
+        payload.company_name = null; // not applicable for candidates
+      }
+      await apiRequest("/auth/register", "POST", payload);
       navigate("/login");
     } catch (err) {
       setError(err.message);
@@ -102,6 +113,21 @@ function Register() {
                 <option value="recruiter">Recruiter — hiring talent</option>
               </select>
             </div>
+
+            {form.role === "recruiter" && (
+              <div>
+                <label className="text-xs text-muted uppercase tracking-wide">Company Name</label>
+                <input
+                  type="text"
+                  name="company_name"
+                  required
+                  value={form.company_name}
+                  onChange={handleChange}
+                  className="w-full mt-1.5 px-3.5 py-2.5 rounded-lg bg-surface-2 border border-border text-text placeholder:text-muted/60 focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition"
+                  placeholder="Acme Inc."
+                />
+              </div>
+            )}
 
             <button
               type="submit"

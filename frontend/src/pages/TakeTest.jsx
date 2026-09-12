@@ -11,6 +11,8 @@ import { useParams, Link } from "react-router-dom";
 import AppShell from "../components/AppShell";
 import { apiRequest } from "../api/client";
 
+const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+
 const TEST_META = {
   knowledge_reasoning: { label: "Test 1 -- Knowledge & Reasoning" },
   situational_judgment: { label: "Test 2 -- Job Situational Judgment" },
@@ -61,7 +63,11 @@ function TakeTest() {
   const [aiPromptsUsed, setAiPromptsUsed] = useState("");
   const [aiOutputNotes, setAiOutputNotes] = useState("");
   const [verificationNotes, setVerificationNotes] = useState("");
-  const [filesSubmitted, setFilesSubmitted] = useState("");
+
+  // Module 5 -- Practical Test File Upload
+  const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [fileUploadError, setFileUploadError] = useState("");
 
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(true);
@@ -102,7 +108,7 @@ function TakeTest() {
       setAiPromptsUsed(data.answers?.ai_prompts_used || "");
       setAiOutputNotes(data.answers?.ai_output_notes || "");
       setVerificationNotes(data.answers?.verification_notes || "");
-      setFilesSubmitted(data.answers?.files_submitted || "");
+      setUploadedFiles(data.files || []);
       if (data.status === "submitted") {
         setSubmitted(true);
       } else {
@@ -160,10 +166,52 @@ function TakeTest() {
         ai_prompts_used: aiUsed ? aiPromptsUsed : "",
         ai_output_notes: aiUsed ? aiOutputNotes : "",
         verification_notes: aiUsed ? verificationNotes : "",
-        files_submitted: filesSubmitted,
       };
     }
     return answers;
+  }
+
+  async function handleFileUpload(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file || !attempt) return;
+
+    setUploadingFile(true);
+    setFileUploadError("");
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(
+        `${BASE_URL}/test-attempts/${attempt.attempt_id}/upload-file?candidate_id=${user.id}`,
+        { method: "POST", body: formData }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Upload failed");
+      setUploadedFiles((prev) => [...prev, data]);
+    } catch (err) {
+      setFileUploadError(err.message);
+    } finally {
+      setUploadingFile(false);
+    }
+  }
+
+  async function handleFileDelete(fileId) {
+    try {
+      const res = await fetch(`${BASE_URL}/test-attempts/file/${fileId}?candidate_id=${user.id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Couldn't remove file");
+      setUploadedFiles((prev) => prev.filter((f) => f.id !== fileId));
+    } catch (err) {
+      setFileUploadError(err.message);
+    }
+  }
+
+  function formatFileSize(bytes) {
+    if (!bytes) return "";
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   async function saveProgress() {
@@ -409,21 +457,38 @@ function TakeTest() {
             />
           </div>
 
-          {attempt.content?.required_files?.length > 0 && (
-            <div>
-              <p className="text-xs text-muted uppercase tracking-wide mb-1">
-                Files to Submit ({attempt.content.required_files.join(", ")})
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs text-muted uppercase tracking-wide">
+                Upload Your Work{attempt.proof_of_work_required ? " (required)" : ""}
               </p>
-              <textarea
-                rows={2}
-                value={filesSubmitted}
-                onChange={(e) => setFilesSubmitted(e.target.value)}
-                onBlur={saveProgress}
-                placeholder="Since file upload isn't available in this prototype, briefly describe each file's contents here..."
-                className="w-full px-3.5 py-2.5 rounded-lg bg-surface-2 border border-border text-text placeholder:text-muted/60 focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold transition text-sm resize-none"
-              />
+              <label className="text-xs font-medium px-3 py-1.5 rounded-lg bg-gold hover:bg-gold-dim transition text-ink cursor-pointer disabled:opacity-50">
+                {uploadingFile ? "Uploading..." : "+ Add File"}
+                <input type="file" onChange={handleFileUpload} disabled={uploadingFile} className="hidden" />
+              </label>
             </div>
-          )}
+            {attempt.content?.required_files?.length > 0 && (
+              <p className="text-muted text-xs mb-2">Expected: {attempt.content.required_files.join(", ")}</p>
+            )}
+            {fileUploadError && <p className="text-danger text-xs mb-2">{fileUploadError}</p>}
+            {uploadedFiles.length === 0 ? (
+              <p className="text-muted text-sm italic">No files uploaded yet.</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {uploadedFiles.map((f) => (
+                  <div key={f.id} className="flex items-center justify-between bg-ink/40 border border-border rounded-lg px-3 py-2">
+                    <div>
+                      <p className="text-text text-sm">{f.original_filename}</p>
+                      <p className="text-muted text-xs">{formatFileSize(f.file_size_bytes)}</p>
+                    </div>
+                    <button onClick={() => handleFileDelete(f.id)} className="text-muted hover:text-danger text-xs px-2">
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {attempt.ai_allowed === "allowed" && (
             <div className="border-t border-border pt-4 flex flex-col gap-3">
@@ -484,9 +549,13 @@ function TakeTest() {
             </div>
           )}
 
+          {attempt.proof_of_work_required && uploadedFiles.length === 0 && (
+            <p className="text-gold text-xs -mt-2">Upload at least one file before you can submit this test.</p>
+          )}
+
           <button
             onClick={() => handleSubmit(false)}
-            disabled={submitting}
+            disabled={submitting || (attempt.proof_of_work_required && uploadedFiles.length === 0)}
             className="bg-gold hover:bg-gold-dim transition text-ink font-semibold py-2.5 rounded-lg disabled:opacity-50"
           >
             {submitting ? "Submitting..." : "Submit Test"}

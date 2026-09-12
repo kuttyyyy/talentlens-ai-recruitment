@@ -7,14 +7,27 @@
 # to the candidate -- only the recruiter (via a later module) sees those.
 
 import json
+import os
+import shutil
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas
 from app.integrity_agent import generate_integrity_report
 
 router = APIRouter(prefix="/test-attempts", tags=["Candidate Assessments (Module 4)"])
+
+# Module 5 -- Practical Test File Upload
+UPLOAD_FOLDER = "uploaded_practical_test_files"
+ALLOWED_EXTENSIONS = (
+    ".pdf", ".doc", ".docx", ".txt", ".zip", ".rar",
+    ".png", ".jpg", ".jpeg", ".gif",
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".html", ".css", ".json",
+    ".xlsx", ".csv", ".pptx", ".sql", ".ipynb", ".md",
+)
+MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB per file
 
 # Fields a candidate must never see before (or after) submitting -- these
 # are the answer key / grading rationale, reserved for recruiter review.
@@ -35,7 +48,16 @@ def _sanitize_content(content: dict) -> dict:
     return clean
 
 
-def _attempt_to_out(attempt: models.TestAttempt, test: models.AssessmentTest) -> dict:
+def _file_to_out(f: models.TestAttemptFile) -> dict:
+    return {
+        "id": f.id,
+        "original_filename": f.original_filename,
+        "file_size_bytes": f.file_size_bytes,
+        "uploaded_at": f.uploaded_at,
+    }
+
+
+def _attempt_to_out(attempt: models.TestAttempt, test: models.AssessmentTest, db: Session = None) -> dict:
     try:
         content = json.loads(test.content_json) if test.content_json else {}
     except (json.JSONDecodeError, TypeError):
@@ -45,6 +67,16 @@ def _attempt_to_out(attempt: models.TestAttempt, test: models.AssessmentTest) ->
         answers = json.loads(attempt.answers_json) if attempt.answers_json else {}
     except (json.JSONDecodeError, TypeError):
         answers = {}
+
+    files = []
+    if db is not None:
+        files = [
+            _file_to_out(f)
+            for f in db.query(models.TestAttemptFile)
+            .filter(models.TestAttemptFile.attempt_id == attempt.id)
+            .order_by(models.TestAttemptFile.uploaded_at)
+            .all()
+        ]
 
     return {
         "attempt_id": attempt.id,
@@ -64,6 +96,7 @@ def _attempt_to_out(attempt: models.TestAttempt, test: models.AssessmentTest) ->
         "started_at": attempt.started_at,
         "submitted_at": attempt.submitted_at,
         "answers": answers,
+        "files": files,
     }
 
 
@@ -200,7 +233,7 @@ def start_attempt(application_id: int, assessment_test_id: int, candidate_id: in
         db.commit()
         db.refresh(attempt)
 
-    return _attempt_to_out(attempt, test)
+    return _attempt_to_out(attempt, test, db)
 
 
 @router.put("/{attempt_id}/save")
@@ -235,6 +268,16 @@ def submit_attempt(attempt_id: int, submission: schemas.TestAttemptSubmit, db: S
     if attempt.status == "submitted":
         return {"message": "Already submitted", "status": "submitted", "submitted_at": attempt.submitted_at}
 
+    test = attempt.assessment_test
+    if test and test.test_type == "practical_simulation" and test.proof_of_work_required:
+        file_count = (
+            db.query(models.TestAttemptFile)
+            .filter(models.TestAttemptFile.attempt_id == attempt_id)
+            .count()
+        )
+        if file_count == 0:
+            raise HTTPException(status_code=400, detail="Please upload at least one file with your completed work before submitting")
+
     attempt.answers_json = json.dumps(submission.answers)
     if submission.integrity_events is not None:
         attempt.integrity_events_json = json.dumps(submission.integrity_events)
@@ -243,6 +286,106 @@ def submit_attempt(attempt_id: int, submission: schemas.TestAttemptSubmit, db: S
 
     db.commit()
     return {"message": "Test submitted successfully", "status": "submitted", "submitted_at": attempt.submitted_at}
+
+
+@router.post("/{attempt_id}/upload-file")
+def upload_practical_test_file(attempt_id: int, candidate_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Module 5 (Practical Test File Upload) -- the candidate attaches a
+    file of their completed work to their Practical Test (Test 3) attempt.
+    Multiple files can be attached before submitting."""
+    attempt = db.query(models.TestAttempt).filter(models.TestAttempt.id == attempt_id).first()
+    if not attempt:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+    if attempt.application.candidate_id != candidate_id:
+        raise HTTPException(status_code=403, detail="This attempt doesn't belong to you")
+    if attempt.status == "submitted":
+        raise HTTPException(status_code=400, detail="This test has already been submitted and can no longer be edited")
+    if attempt.assessment_test.test_type != "practical_simulation":
+        raise HTTPException(status_code=400, detail="File upload is only available for the Practical Test")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"File type {ext or '(none)'} isn't allowed")
+
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    safe_filename = f"attempt_{attempt_id}_{int(datetime.now(timezone.utc).timestamp())}_{file.filename}"
+    file_path = os.path.join(UPLOAD_FOLDER, safe_filename)
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    file_size = os.path.getsize(file_path)
+    if file_size > MAX_FILE_SIZE_BYTES:
+        os.remove(file_path)
+        raise HTTPException(status_code=400, detail="File is too large (max 25 MB)")
+
+    record = models.TestAttemptFile(
+        attempt_id=attempt_id,
+        original_filename=file.filename,
+        stored_path=file_path,
+        file_size_bytes=file_size,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+
+    return _file_to_out(record)
+
+
+@router.get("/{attempt_id}/files")
+def list_practical_test_files(attempt_id: int, candidate_id: int, db: Session = Depends(get_db)):
+    """The candidate's own list of files they've attached so far."""
+    attempt = db.query(models.TestAttempt).filter(models.TestAttempt.id == attempt_id).first()
+    if not attempt:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+    if attempt.application.candidate_id != candidate_id:
+        raise HTTPException(status_code=403, detail="This attempt doesn't belong to you")
+
+    files = (
+        db.query(models.TestAttemptFile)
+        .filter(models.TestAttemptFile.attempt_id == attempt_id)
+        .order_by(models.TestAttemptFile.uploaded_at)
+        .all()
+    )
+    return [_file_to_out(f) for f in files]
+
+
+@router.delete("/file/{file_id}")
+def delete_practical_test_file(file_id: int, candidate_id: int, db: Session = Depends(get_db)):
+    """The candidate removes a file they attached, before submitting."""
+    record = db.query(models.TestAttemptFile).filter(models.TestAttemptFile.id == file_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    if record.attempt.application.candidate_id != candidate_id:
+        raise HTTPException(status_code=403, detail="This file doesn't belong to you")
+    if record.attempt.status == "submitted":
+        raise HTTPException(status_code=400, detail="This test has already been submitted and can no longer be edited")
+
+    if os.path.exists(record.stored_path):
+        try:
+            os.remove(record.stored_path)
+        except OSError:
+            pass  # DB record removal still proceeds -- an orphaned file on disk isn't worth blocking on
+
+    db.delete(record)
+    db.commit()
+    return {"message": "File removed"}
+
+
+@router.get("/file/{file_id}/download")
+def download_practical_test_file(file_id: int, recruiter_id: int, db: Session = Depends(get_db)):
+    """Lets a recruiter open/download a file the candidate submitted as
+    proof of work for the Practical Test. Only the recruiter who owns the
+    job this application belongs to can access it."""
+    record = db.query(models.TestAttemptFile).filter(models.TestAttemptFile.id == file_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    if record.attempt.application.job.recruiter_id != recruiter_id:
+        raise HTTPException(status_code=403, detail="This file doesn't belong to one of your jobs")
+    if not os.path.exists(record.stored_path):
+        raise HTTPException(status_code=404, detail="File is missing from storage")
+
+    return FileResponse(record.stored_path, filename=record.original_filename)
 
 
 @router.get("/application/{application_id}/recruiter-view")
@@ -290,6 +433,14 @@ def get_attempts_for_recruiter(application_id: int, recruiter_id: int, db: Sessi
 
         integrity_report = generate_integrity_report(attempt) if attempt else {"flags": [], "disclaimer": None}
 
+        files = (
+            [_file_to_out(f) for f in db.query(models.TestAttemptFile)
+                .filter(models.TestAttemptFile.attempt_id == attempt.id)
+                .order_by(models.TestAttemptFile.uploaded_at)
+                .all()]
+            if attempt else []
+        )
+
         results.append({
             "test_id": test.id,
             "test_number": test.test_number,
@@ -302,6 +453,7 @@ def get_attempts_for_recruiter(application_id: int, recruiter_id: int, db: Sessi
             "evaluation_score": attempt.evaluation_score if attempt else None,
             "evaluation": evaluation,
             "integrity_report": integrity_report,
+            "files": files,
         })
 
     return {"tests": results}

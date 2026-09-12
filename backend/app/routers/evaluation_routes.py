@@ -20,9 +20,44 @@ from app.ai_engine import generate_candidate_summary
 router = APIRouter(prefix="/evaluations", tags=["Evaluation & Scoring (Module 7)"])
 
 
+def _cv_match_score(application: models.Application):
+    """The CV-JD Match Detail score (Module 3's richer, evidence-based
+    alignment_score) -- falls back to the quick apply-time match_score if
+    the detailed analysis isn't available for some reason (e.g. an older
+    application, or the AI call failed at apply time)."""
+    if application.jd_match_json:
+        try:
+            jd_match = json.loads(application.jd_match_json)
+            alignment_score = jd_match.get("alignment_score")
+            if alignment_score is not None:
+                return alignment_score
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return application.match_score
+
+
+def _blend_overall_score(cv_match_score, assessment_weighted_sum, assessment_weight_scored, cv_match_weight):
+    """Module 3 -- Overall Score Match: the TRUE overall score is never
+    just the CV/resume + CV-JD match, and never just the assessment
+    results -- it's a blend of both, using the recruiter-configurable
+    cv_match_weight (defaults to 30% CV-JD match / 70% assessments).
+    Returns None until BOTH halves are actually available, same
+    "never fabricate a number" principle as the assessment-only score
+    that existed before."""
+    if assessment_weight_scored != 100 or assessment_weighted_sum is None:
+        return None
+    if cv_match_score is None:
+        return None
+    cv_w = cv_match_weight if cv_match_weight is not None else 30
+    assessment_w = 100 - cv_w
+    return round(cv_match_score * cv_w / 100 + assessment_weighted_sum * assessment_w / 100)
+
+
 @router.put("/assessment/{assessment_id}/weights")
 def update_weights(assessment_id: int, weights: schemas.EvaluationWeightsUpdate, recruiter_id: int, db: Session = Depends(get_db)):
-    """Recruiter sets how much each test counts toward the overall score."""
+    """Recruiter sets how much each test counts toward the assessment
+    portion of the score, and how much the CV/resume + CV-JD match detail
+    counts toward the overall score (Module 3)."""
     assessment = db.query(models.Assessment).filter(models.Assessment.id == assessment_id).first()
     if not assessment:
         raise HTTPException(status_code=404, detail="Assessment not found")
@@ -31,17 +66,21 @@ def update_weights(assessment_id: int, weights: schemas.EvaluationWeightsUpdate,
 
     total = weights.test1_weight + weights.test2_weight + weights.test3_weight
     if total != 100:
-        raise HTTPException(status_code=400, detail=f"Weights must sum to 100 (got {total})")
+        raise HTTPException(status_code=400, detail=f"Test weights must sum to 100 (got {total})")
+    if not (0 <= weights.cv_match_weight <= 100):
+        raise HTTPException(status_code=400, detail="CV-JD match weight must be between 0 and 100")
 
     assessment.test1_weight = weights.test1_weight
     assessment.test2_weight = weights.test2_weight
     assessment.test3_weight = weights.test3_weight
+    assessment.cv_match_weight = weights.cv_match_weight
     db.commit()
 
     return {
         "test1_weight": assessment.test1_weight,
         "test2_weight": assessment.test2_weight,
         "test3_weight": assessment.test3_weight,
+        "cv_match_weight": assessment.cv_match_weight,
     }
 
 
@@ -78,6 +117,9 @@ def evaluate_application(application_id: int, recruiter_id: int, force: bool = F
         assessment.test2_weight = 25
         assessment.test3_weight = 45
         db.commit()
+    if assessment.cv_match_weight is None:
+        assessment.cv_match_weight = 30
+        db.commit()
 
     evaluated_count = 0
     skipped_count = 0
@@ -107,6 +149,18 @@ def evaluate_application(application_id: int, recruiter_id: int, force: bool = F
             answers = {}
 
         if test.test_type == "practical_simulation":
+            uploaded_files = (
+                db.query(models.TestAttemptFile)
+                .filter(models.TestAttemptFile.attempt_id == attempt.id)
+                .order_by(models.TestAttemptFile.uploaded_at)
+                .all()
+            )
+            # Module 5 -- use the candidate's ACTUALLY uploaded filenames as
+            # evidence, rather than whatever they typed into the (now
+            # removed) self-reported "files submitted" text field.
+            answers["files_submitted"] = (
+                ", ".join(f.original_filename for f in uploaded_files) if uploaded_files else "(no files uploaded)"
+            )
             result = evaluate_test3(content, answers)
         else:
             result = evaluate_test1_or_2(test.test_type, content, answers)
@@ -154,6 +208,32 @@ def evaluate_application(application_id: int, recruiter_id: int, force: bool = F
             application.candidate_summary_json = json.dumps(summary)
             db.commit()
 
+    # Module 3 -- recompute and persist the TRUE overall score (CV/resume +
+    # CV-JD match detail blended with assessment results) any time
+    # evaluation runs, even if nothing changed this call -- weights may
+    # have been edited since the last run.
+    weighted_sum = 0.0
+    weight_total_scored = 0
+    weights = {1: assessment.test1_weight, 2: assessment.test2_weight, 3: assessment.test3_weight}
+    for test in assessment.tests:
+        attempt = (
+            db.query(models.TestAttempt)
+            .filter(
+                models.TestAttempt.application_id == application_id,
+                models.TestAttempt.assessment_test_id == test.id,
+            )
+            .first()
+        )
+        if attempt and attempt.evaluation_score is not None:
+            w = weights.get(test.test_number) or 0
+            weighted_sum += attempt.evaluation_score * w / 100
+            weight_total_scored += w
+
+    application.overall_score = _blend_overall_score(
+        _cv_match_score(application), weighted_sum, weight_total_scored, assessment.cv_match_weight
+    )
+    db.commit()
+
     return {"message": f"Evaluated {evaluated_count} test(s), skipped {skipped_count} already-evaluated test(s)."}
 
 
@@ -186,6 +266,7 @@ def get_evaluation_report(application_id: int, recruiter_id: int, db: Session = 
         2: assessment.test2_weight if assessment.test2_weight is not None else 25,
         3: assessment.test3_weight if assessment.test3_weight is not None else 45,
     }
+    cv_match_weight = assessment.cv_match_weight if assessment.cv_match_weight is not None else 30
     tests_out = []
     weighted_sum = 0.0
     weight_total_scored = 0
@@ -218,6 +299,23 @@ def get_evaluation_report(application_id: int, recruiter_id: int, db: Session = 
             weighted_sum += attempt.evaluation_score * w / 100
             weight_total_scored += w
 
+        files = (
+            [
+                {
+                    "id": f.id,
+                    "original_filename": f.original_filename,
+                    "file_size_bytes": f.file_size_bytes,
+                    "uploaded_at": f.uploaded_at,
+                }
+                for f in db.query(models.TestAttemptFile)
+                .filter(models.TestAttemptFile.attempt_id == attempt.id)
+                .order_by(models.TestAttemptFile.uploaded_at)
+                .all()
+            ]
+            if attempt and test.test_type == "practical_simulation"
+            else []
+        )
+
         tests_out.append({
             "test_id": test.id,
             "test_number": test.test_number,
@@ -228,10 +326,19 @@ def get_evaluation_report(application_id: int, recruiter_id: int, db: Session = 
             "score": attempt.evaluation_score if attempt else None,
             "evaluation": evaluation,
             "integrity_report": integrity_report,
+            "files": files,
         })
 
-    # Only report an overall score once every weighted test has actually been scored
-    overall_score = round(weighted_sum) if weight_total_scored == 100 else None
+    # Only report an assessment score once every weighted test has actually been scored
+    assessment_score = round(weighted_sum) if weight_total_scored == 100 else None
+
+    # Module 3 -- the TRUE overall score blends this assessment score with
+    # the candidate's CV/resume + CV-JD match detail. Persisted so it's
+    # available elsewhere (e.g. the comparison table) without recomputing.
+    cv_match_score = _cv_match_score(application)
+    overall_score = _blend_overall_score(cv_match_score, weighted_sum, weight_total_scored, cv_match_weight)
+    application.overall_score = overall_score
+    db.commit()
 
     try:
         candidate_summary = json.loads(application.candidate_summary_json) if application.candidate_summary_json else None
@@ -242,10 +349,45 @@ def get_evaluation_report(application_id: int, recruiter_id: int, db: Session = 
         "application_id": application_id,
         "assessment_id": assessment.id,
         "weights": weights,
+        "cv_match_weight": cv_match_weight,
         "tests": tests_out,
+        "cv_match_score": cv_match_score,
+        "assessment_score": assessment_score,
         "overall_score": overall_score,
         "candidate_summary": candidate_summary,
+        "score_shared": application.score_shared,
+        "shared_overall_score": application.shared_overall_score,
+        "recruiter_score_feedback": application.recruiter_score_feedback,
+        "score_shared_at": application.score_shared_at,
         "recommendation": "AI Assessment -> Recruiter Review Required",
+    }
+
+
+@router.post("/application/{application_id}/share-score")
+def share_score_with_candidate(application_id: int, share: schemas.ScoreFeedbackShare, recruiter_id: int, db: Session = Depends(get_db)):
+    """Module 3 -- the recruiter shares the candidate's current overall
+    score plus an optional message. Takes a snapshot of the score at share
+    time so it stays stable even if weights are edited afterward; the
+    recruiter can re-share later to push an updated snapshot."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if application.job.recruiter_id != recruiter_id:
+        raise HTTPException(status_code=403, detail="This application doesn't belong to one of your jobs")
+    if application.overall_score is None:
+        raise HTTPException(status_code=400, detail="This candidate's overall score isn't ready yet -- run evaluation first")
+
+    application.score_shared = True
+    application.shared_overall_score = application.overall_score
+    application.recruiter_score_feedback = share.feedback
+    application.score_shared_at = datetime.now(timezone.utc)
+    db.commit()
+
+    return {
+        "message": "Score and feedback shared with the candidate",
+        "shared_overall_score": application.shared_overall_score,
+        "recruiter_score_feedback": application.recruiter_score_feedback,
+        "score_shared_at": application.score_shared_at,
     }
 
 
@@ -270,6 +412,7 @@ def get_candidate_comparison(job_id: int, recruiter_id: int, db: Session = Depen
         {1: assessment.test1_weight, 2: assessment.test2_weight, 3: assessment.test3_weight}
         if assessment else {1: 30, 2: 25, 3: 45}
     )
+    cv_match_weight = (assessment.cv_match_weight if assessment and assessment.cv_match_weight is not None else 30)
 
     applications = db.query(models.Application).filter(models.Application.job_id == job_id).all()
     rows = []
@@ -326,7 +469,7 @@ def get_candidate_comparison(job_id: int, recruiter_id: int, db: Session = Depen
                         elif f["severity"] == "low" and highest_severity is None:
                             highest_severity = "low"
 
-        overall_score = round(weighted_sum) if weight_total_scored == 100 else None
+        overall_score = _blend_overall_score(_cv_match_score(application), weighted_sum, weight_total_scored, cv_match_weight)
 
         rows.append({
             "application_id": application.id,

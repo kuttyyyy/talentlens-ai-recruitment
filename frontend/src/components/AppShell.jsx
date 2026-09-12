@@ -6,6 +6,7 @@
 
 import { useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
+import CandidateCopilot from "./CandidateCopilot";
 
 // Simple nav items — we'll add more here as we build later modules
 // (Jobs, Applicants, etc.). role: which user role sees this link.
@@ -100,6 +101,9 @@ function AppShell({ children, activePage }) {
 
       {/* Main content area */}
       <main className="flex-1 p-10">{children}</main>
+
+      {/* Module 12 -- Candidate Copilot: only for candidates, available on every page */}
+      {user?.role === "candidate" && <CandidateCopilot user={user} />}
     </div>
   );
 }

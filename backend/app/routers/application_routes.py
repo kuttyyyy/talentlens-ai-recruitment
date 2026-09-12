@@ -136,6 +136,22 @@ def get_candidate_applications(candidate_id: int, db: Session = Depends(get_db))
         .all()
     )
 
+    # Module 4 -- one query to find which of these applications already
+    # have interview feedback shared with the candidate, instead of one
+    # query per application.
+    application_ids = [a.id for a in applications]
+    shared_feedback_app_ids = set()
+    if application_ids:
+        shared_feedback_app_ids = {
+            row[0]
+            for row in db.query(models.InterviewFeedback.application_id)
+            .filter(
+                models.InterviewFeedback.application_id.in_(application_ids),
+                models.InterviewFeedback.shared_with_candidate == True,  # noqa: E712
+            )
+            .all()
+        }
+
     return [
         {
             "id": app.id,
@@ -147,6 +163,14 @@ def get_candidate_applications(candidate_id: int, db: Session = Depends(get_db))
             "ai_recommendation": app.ai_recommendation,
             "status": app.status,
             "applied_at": app.applied_at,
+            # Module 3 -- only meaningful once a recruiter has explicitly shared it
+            "score_shared": app.score_shared,
+            "shared_overall_score": app.shared_overall_score,
+            "recruiter_score_feedback": app.recruiter_score_feedback,
+            "score_shared_at": app.score_shared_at,
+            # Module 4 -- interview release + feedback-shared status
+            "interview_sent": app.interview_sent,
+            "interview_feedback_shared": app.id in shared_feedback_app_ids,
         }
         for app in applications
     ]
@@ -217,6 +241,14 @@ def get_application_detail(application_id: int, db: Session = Depends(get_db)):
         "jd_match": json.loads(application.jd_match_json) if application.jd_match_json else None,
         "status": application.status,
         "applied_at": application.applied_at,
+        "overall_score": application.overall_score,
+        "score_shared": application.score_shared,
+        "shared_overall_score": application.shared_overall_score,
+        "recruiter_score_feedback": application.recruiter_score_feedback,
+        "score_shared_at": application.score_shared_at,
+        "interview_sent": application.interview_sent,
+        "interview_sent_at": application.interview_sent_at,
+        "interview_answers_submitted_at": application.interview_answers_submitted_at,
         "interview_questions": [q.question_text for q in questions],
         "emails": [
             {

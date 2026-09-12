@@ -6,14 +6,11 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas, auth
 
-# A "router" groups related endpoints together.
-# prefix="/auth" means every URL here starts with /auth
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 @router.post("/register", response_model=schemas.UserOut)
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    # Check if this email is already registered
     existing = db.query(models.User).filter(models.User.email == user.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -21,18 +18,38 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     if user.role not in ("candidate", "recruiter", "admin"):
         raise HTTPException(status_code=400, detail="Role must be 'candidate', 'recruiter', or 'admin'")
 
-    # Create the new user with a HASHED password (never store plain text!)
+    # Module 2 -- a recruiter must provide their company name at registration.
+    if user.role == "recruiter" and not (user.company_name and user.company_name.strip()):
+        raise HTTPException(status_code=400, detail="Company name is required for recruiter accounts")
+
     new_user = models.User(
         full_name=user.full_name,
         email=user.email,
         password_hash=auth.hash_password(user.password),
         role=user.role,
     )
+
+    # Module 2 -- link (or create) the company by name, case-insensitively,
+    # so "Acme Inc" and "acme inc" resolve to the same company instead of
+    # silently creating duplicates every time someone registers.
+    if user.role == "recruiter":
+        company_name = user.company_name.strip()
+        company = (
+            db.query(models.Company)
+            .filter(models.Company.name.ilike(company_name))
+            .first()
+        )
+        if not company:
+            company = models.Company(name=company_name)
+            db.add(company)
+            db.commit()
+            db.refresh(company)
+        new_user.company_id = company.id
+
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
 
-    # If they're a candidate, automatically create their empty profile too
     if user.role == "candidate":
         profile = models.CandidateProfile(user_id=new_user.id)
         db.add(profile)
@@ -45,11 +62,9 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
 def login(credentials: schemas.UserLogin, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == credentials.email).first()
 
-    # Check both: does this user exist, AND does the password match?
     if not user or not auth.verify_password(credentials.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    # Create their login token, embedding their id and role inside it
     token = auth.create_access_token({"sub": str(user.id), "role": user.role})
 
     return {"access_token": token, "token_type": "bearer", "user": user}

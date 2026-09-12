@@ -5,6 +5,7 @@
 #   3. Only send it once the recruiter explicitly confirms
 
 import json
+from datetime import datetime, timezone
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -14,6 +15,7 @@ from app.ai_engine import (
     generate_interview_questions,
     generate_categorized_interview_questions,
     summarize_interview_feedback,
+    evaluate_interview_answers,
     draft_interview_email,
     draft_status_email,
 )
@@ -29,6 +31,10 @@ class EmailDraftRequest(BaseModel):
 class SendEmailRequest(BaseModel):
     subject: str
     body: str
+
+
+class InterviewAnswerSubmit(BaseModel):
+    answers: dict[int, str]  # {question_id: answer_text}
 
 
 @router.post("/generate-questions/{application_id}")
@@ -110,6 +116,97 @@ def create_interview_questions(application_id: int, db: Session = Depends(get_db
     return get_interview_questions(application_id, db)
 
 
+@router.post("/send/{application_id}")
+def send_interview_to_candidate(application_id: int, recruiter_id: int, db: Session = Depends(get_db)):
+    """Module 4 (Interview Fix) -- the recruiter clicks 'Send': releases
+    the currently-generated questions so the candidate can immediately see
+    them on their own page. Safe to call again (e.g. after regenerating or
+    editing questions) -- it just re-stamps the sent time."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if application.job.recruiter_id != recruiter_id:
+        raise HTTPException(status_code=403, detail="This application doesn't belong to one of your jobs")
+
+    question_count = (
+        db.query(models.InterviewQuestion)
+        .filter(models.InterviewQuestion.application_id == application_id)
+        .count()
+    )
+    if question_count == 0:
+        raise HTTPException(status_code=400, detail="Generate interview questions before sending them")
+
+    application.interview_sent = True
+    application.interview_sent_at = datetime.now(timezone.utc)
+    db.commit()
+
+    return {"message": "Interview questions sent to the candidate", "interview_sent_at": application.interview_sent_at}
+
+
+@router.get("/candidate/{application_id}")
+def get_interview_for_candidate(application_id: int, candidate_id: int, db: Session = Depends(get_db)):
+    """The candidate's own view: their released interview questions (and
+    any answers they've already written), grouped by category. Returns
+    nothing until the recruiter has clicked Send."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if application.candidate_id != candidate_id:
+        raise HTTPException(status_code=403, detail="This isn't your application")
+
+    if not application.interview_sent:
+        return {"interview_sent": False, "questions_by_category": {}, "submitted_at": None}
+
+    questions = (
+        db.query(models.InterviewQuestion)
+        .filter(models.InterviewQuestion.application_id == application_id)
+        .order_by(models.InterviewQuestion.id)
+        .all()
+    )
+    grouped = {}
+    for q in questions:
+        grouped.setdefault(q.category, []).append(
+            {"id": q.id, "question_text": q.question_text, "candidate_answer": q.candidate_answer}
+        )
+
+    return {
+        "interview_sent": True,
+        "interview_sent_at": application.interview_sent_at,
+        "questions_by_category": grouped,
+        "submitted_at": application.interview_answers_submitted_at,
+    }
+
+
+@router.post("/candidate/{application_id}/answers")
+def submit_interview_answers(application_id: int, candidate_id: int, submission: InterviewAnswerSubmit, db: Session = Depends(get_db)):
+    """The candidate submits (or updates, before the recruiter evaluates)
+    their written answers to the released interview questions."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if application.candidate_id != candidate_id:
+        raise HTTPException(status_code=403, detail="This isn't your application")
+    if not application.interview_sent:
+        raise HTTPException(status_code=400, detail="No interview questions have been sent yet")
+
+    questions = (
+        db.query(models.InterviewQuestion)
+        .filter(models.InterviewQuestion.application_id == application_id)
+        .all()
+    )
+    questions_by_id = {q.id: q for q in questions}
+
+    for question_id, answer_text in submission.answers.items():
+        question = questions_by_id.get(question_id)
+        if question:
+            question.candidate_answer = answer_text
+
+    application.interview_answers_submitted_at = datetime.now(timezone.utc)
+    db.commit()
+
+    return {"message": "Your answers have been submitted", "submitted_at": application.interview_answers_submitted_at}
+
+
 @router.get("/questions/{application_id}")
 def get_interview_questions(application_id: int, db: Session = Depends(get_db)):
     """Fetches previously generated/edited questions, grouped by category."""
@@ -121,7 +218,9 @@ def get_interview_questions(application_id: int, db: Session = Depends(get_db)):
     )
     grouped = {}
     for q in questions:
-        grouped.setdefault(q.category, []).append({"id": q.id, "question_text": q.question_text})
+        grouped.setdefault(q.category, []).append(
+            {"id": q.id, "question_text": q.question_text, "candidate_answer": q.candidate_answer}
+        )
     return {"questions_by_category": grouped}
 
 
@@ -188,6 +287,7 @@ def save_interview_feedback(application_id: int, feedback: schemas.InterviewFeed
     record.overall_feedback = feedback.overall_feedback
     record.recommendation = feedback.recommendation
     record.ai_summary = None  # stale after any edit -- recruiter must re-summarize
+    record.ai_generated = False  # this is now the recruiter's own hand-edited feedback
 
     db.commit()
     db.refresh(record)
@@ -218,6 +318,124 @@ def get_interview_feedback(application_id: int, recruiter_id: int, db: Session =
         "overall_feedback": record.overall_feedback,
         "recommendation": record.recommendation,
         "ai_summary": record.ai_summary,
+        "ai_generated": record.ai_generated,
+        "shared_with_candidate": record.shared_with_candidate,
+        "shared_at": record.shared_at,
+    }
+
+
+@router.post("/feedback/{application_id}/evaluate-with-ai")
+def evaluate_interview_with_ai(application_id: int, recruiter_id: int, db: Session = Depends(get_db)):
+    """Module 4 (Interview Fix) -- Candidate submits answers -> Recruiter
+    evaluates with AI -> AI automatically generates a first-pass interview
+    feedback record from those answers. The recruiter can still edit
+    anything (via Save Feedback above) before sharing it with the candidate."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if application.job.recruiter_id != recruiter_id:
+        raise HTTPException(status_code=403, detail="This application doesn't belong to one of your jobs")
+    if not application.interview_answers_submitted_at:
+        raise HTTPException(status_code=400, detail="The candidate hasn't submitted their interview answers yet")
+
+    questions = (
+        db.query(models.InterviewQuestion)
+        .filter(models.InterviewQuestion.application_id == application_id)
+        .all()
+    )
+    qa_pairs = [
+        {"category": q.category, "question_text": q.question_text, "candidate_answer": q.candidate_answer}
+        for q in questions
+    ]
+
+    result = evaluate_interview_answers(
+        job_title=application.job.title, job_description=application.job.description, qa_pairs=qa_pairs
+    )
+    if not result:
+        raise HTTPException(status_code=503, detail="AI evaluation failed. Please try again.")
+
+    record = (
+        db.query(models.InterviewFeedback)
+        .filter(models.InterviewFeedback.application_id == application_id, models.InterviewFeedback.recruiter_id == recruiter_id)
+        .first()
+    )
+    if not record:
+        record = models.InterviewFeedback(application_id=application_id, recruiter_id=recruiter_id)
+        db.add(record)
+
+    record.technical_competency = result.get("technical_competency")
+    record.communication = result.get("communication")
+    record.problem_solving = result.get("problem_solving")
+    record.job_knowledge = result.get("job_knowledge")
+    record.overall_feedback = result.get("overall_feedback")
+    record.recommendation = result.get("recommendation")
+    record.ai_summary = None
+    record.ai_generated = True
+
+    db.commit()
+    db.refresh(record)
+    return {
+        "id": record.id,
+        "technical_competency": record.technical_competency,
+        "communication": record.communication,
+        "problem_solving": record.problem_solving,
+        "job_knowledge": record.job_knowledge,
+        "overall_feedback": record.overall_feedback,
+        "recommendation": record.recommendation,
+        "ai_generated": record.ai_generated,
+    }
+
+
+@router.post("/feedback/{application_id}/share")
+def share_interview_feedback(application_id: int, recruiter_id: int, db: Session = Depends(get_db)):
+    """The existing feedback the recruiter has recorded (hand-written or
+    AI-assisted) becomes visible on the candidate's own page. Not shared
+    automatically -- the recruiter decides when it's ready."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if application.job.recruiter_id != recruiter_id:
+        raise HTTPException(status_code=403, detail="This application doesn't belong to one of your jobs")
+
+    record = (
+        db.query(models.InterviewFeedback)
+        .filter(models.InterviewFeedback.application_id == application_id, models.InterviewFeedback.recruiter_id == recruiter_id)
+        .first()
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="No feedback recorded yet for this application")
+
+    record.shared_with_candidate = True
+    record.shared_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"message": "Feedback shared with the candidate", "shared_at": record.shared_at}
+
+
+@router.get("/feedback/candidate/{application_id}")
+def get_interview_feedback_for_candidate(application_id: int, candidate_id: int, db: Session = Depends(get_db)):
+    """The candidate's own view of their interview feedback -- returns
+    nothing until the recruiter has explicitly shared it."""
+    application = db.query(models.Application).filter(models.Application.id == application_id).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if application.candidate_id != candidate_id:
+        raise HTTPException(status_code=403, detail="This isn't your application")
+
+    record = (
+        db.query(models.InterviewFeedback)
+        .filter(models.InterviewFeedback.application_id == application_id, models.InterviewFeedback.shared_with_candidate == True)  # noqa: E712
+        .first()
+    )
+    if not record:
+        return None
+    return {
+        "technical_competency": record.technical_competency,
+        "communication": record.communication,
+        "problem_solving": record.problem_solving,
+        "job_knowledge": record.job_knowledge,
+        "overall_feedback": record.overall_feedback,
+        "recommendation": record.recommendation,
+        "shared_at": record.shared_at,
     }
 
 

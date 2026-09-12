@@ -4,6 +4,7 @@
 // withdraw (permanently delete) an application via the 3-dot menu.
 
 import { useState, useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 import AppShell from "../components/AppShell";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
@@ -141,6 +142,37 @@ function MyApplications() {
                 <p className="text-muted text-sm leading-relaxed border-t border-border pt-3">
                   {app.ai_reasoning}
                 </p>
+
+                {app.interview_sent && (
+                  <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
+                    <span className="text-xs text-success">
+                      {app.interview_feedback_shared ? "Interview feedback available" : "Interview questions available"}
+                    </span>
+                    <Link
+                      to={`/interview/${app.id}`}
+                      className="text-xs font-medium px-3 py-1.5 rounded-lg bg-gold hover:bg-gold-dim transition text-ink"
+                    >
+                      View Interview
+                    </Link>
+                  </div>
+                )}
+
+                {app.score_shared && (
+                  <div className="mt-3 pt-3 border-t border-border bg-gold/5 -mx-5 -mb-5 px-5 pb-5 rounded-b-xl">
+                    <p className="text-xs text-gold uppercase tracking-wide mb-1">Recruiter feedback</p>
+                    <p className="text-text text-sm">
+                      Overall score: <span className="font-semibold">{app.shared_overall_score} / 100</span>
+                    </p>
+                    {app.recruiter_score_feedback && (
+                      <p className="text-muted text-sm mt-1">{app.recruiter_score_feedback}</p>
+                    )}
+                    {app.score_shared_at && (
+                      <p className="text-muted/60 text-xs mt-1">
+                        {new Date(app.score_shared_at).toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}

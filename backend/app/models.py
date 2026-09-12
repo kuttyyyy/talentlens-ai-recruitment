@@ -127,6 +127,27 @@ class Application(Base):
     # regenerated whenever evaluation is (re-)run
     candidate_summary_json = Column(Text, nullable=True)
 
+    # Module 3 (Overall Score Match) -- the TRUE overall score, blending the
+    # candidate's resume + CV-JD match detail with their assessment results
+    # (never just one or the other). Recomputed whenever evaluation runs or
+    # the report is viewed. Nullable until every weighted test is scored.
+    overall_score = Column(Float, nullable=True)
+
+    # A recruiter can choose to share the overall score + a short message
+    # with the candidate. Nothing here is visible to the candidate until
+    # score_shared is explicitly set True by the recruiter.
+    score_shared = Column(Boolean, default=False)
+    shared_overall_score = Column(Float, nullable=True)   # snapshot taken at share time
+    recruiter_score_feedback = Column(Text, nullable=True)
+    score_shared_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Module 4 (Interview Fix) -- when the recruiter clicks "Send", the
+    # candidate can immediately see their interview questions; when the
+    # candidate submits answers, the recruiter can then evaluate them.
+    interview_sent = Column(Boolean, default=False)
+    interview_sent_at = Column(DateTime(timezone=True), nullable=True)
+    interview_answers_submitted_at = Column(DateTime(timezone=True), nullable=True)
+
     status = Column(String, default="applied")          # applied, shortlisted, interview_scheduled, rejected, hired
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -144,6 +165,10 @@ class InterviewQuestion(Base):
     question_text = Column(Text, nullable=False)
     category = Column(String, default="general")  # technical | behavioral | situational | cv_based | role_specific | general
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Module 4 (Interview Fix) -- the candidate's own written answer,
+    # submitted once the recruiter has released these questions to them.
+    candidate_answer = Column(Text, nullable=True)
 
     application = relationship("Application", back_populates="interview_questions")
 
@@ -166,6 +191,14 @@ class InterviewFeedback(Base):
     recommendation = Column(String, nullable=True)  # recruiter's own word, e.g. "Move Forward" / "Hold" / "Reject"
     ai_summary = Column(Text, nullable=True)
 
+    # Module 4 (Interview Fix) -- True when this feedback was auto-generated
+    # by AI from the candidate's submitted answers (recruiter should review/
+    # edit before sharing); False for feedback the recruiter typed by hand.
+    ai_generated = Column(Boolean, default=False)
+    # Not visible to the candidate until the recruiter explicitly shares it.
+    shared_with_candidate = Column(Boolean, default=False)
+    shared_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -178,13 +211,32 @@ class VerificationDocument(Base):
     __tablename__ = "verification_documents"
 
     id = Column(Integer, primary_key=True, index=True)
-    candidate_id = Column(Integer, ForeignKey("users.id"))
-    document_type = Column(String, nullable=False)  # "education" | "employment" | "other"
+    candidate_id = Column(Integer, ForeignKey("users.id"), index=True)
+    document_type = Column(String, nullable=False)  # education | employment | government_id | medical_certificate | address_proof | reference_letter | other
     file_path = Column(String, nullable=False)
     extracted_text = Column(Text, nullable=True)
     comparison_result = Column(String, nullable=True)  # "verified" | "inconsistent" | "needs_review" | "unable_to_verify"
     comparison_notes = Column(Text, nullable=True)
     consent_given = Column(Boolean, default=False)
+
+    # --- Phone verification (education/employment institutions) ---
+    institution_name = Column(String, nullable=True)
+    institution_phone = Column(String, nullable=True)
+    institution_contact_name = Column(String, nullable=True)
+    phone_verification_status = Column(String, nullable=True)
+    phone_verification_notes = Column(Text, nullable=True)
+    phone_verified_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    phone_verified_at = Column(DateTime(timezone=True), nullable=True)
+
+    # --- Fraud-detection signals ---
+    file_hash = Column(String, nullable=True, index=True)
+    duplicate_of_candidate_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    metadata_flag = Column(Boolean, default=False)
+    metadata_notes = Column(Text, nullable=True)
+
+    # --- Cross-document consistency ---
+    cross_check_notes = Column(Text, nullable=True)
+
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -242,6 +294,11 @@ class Assessment(Base):
     test1_weight = Column(Integer, default=30)
     test2_weight = Column(Integer, default=25)
     test3_weight = Column(Integer, default=45)
+
+    # Module 3 (Overall Score Match) -- how much of the TRUE overall score
+    # comes from the CV/resume + CV-JD match detail, vs. the weighted
+    # assessment score above. E.g. 30 means 30% CV-JD match + 70% assessments.
+    cv_match_weight = Column(Integer, default=30)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -316,6 +373,22 @@ class TestAttempt(Base):
 
     application = relationship("Application")
     assessment_test = relationship("AssessmentTest")
+
+
+class TestAttemptFile(Base):
+    """Module 5 (Practical Test File Upload) -- a file the candidate
+    uploaded as evidence of completed work for the Practical Test (Test 3).
+    A candidate can attach more than one file before submitting."""
+    __tablename__ = "test_attempt_files"
+
+    id = Column(Integer, primary_key=True, index=True)
+    attempt_id = Column(Integer, ForeignKey("test_attempts.id"), index=True)
+    original_filename = Column(String, nullable=False)
+    stored_path = Column(String, nullable=False)
+    file_size_bytes = Column(Integer, nullable=True)
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    attempt = relationship("TestAttempt")
 
 
 class EmailLog(Base):

@@ -246,6 +246,50 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
     return result.get("answer", "")
 
 
+def answer_candidate_copilot_question(question: str, context_data: str):
+    """Candidate-facing copilot. Scoped to ONLY this one candidate's own
+    data (their profile, their own applications, their own assessment/
+    verification status) -- never another candidate's information. Can
+    also answer general job-search/interview-prep questions using normal
+    good-practice knowledge, since those don't depend on platform data."""
+    prompt = f"""You are a friendly job-search assistant for a candidate on
+the TalentLens hiring platform. You have access to THIS CANDIDATE's own
+data below -- never invent applications, scores, or statuses that aren't
+present in it.
+
+THIS CANDIDATE'S DATA:
+\"\"\"
+{context_data[:6000]}
+\"\"\"
+
+Some things are deliberately NOT included in this data because the platform
+hasn't shared them with the candidate yet: specific interview questions,
+interviewer feedback, and detailed AI evaluation scores/breakdowns. If asked
+about any of these, say plainly that it hasn't been shared with them yet and
+they should check their dashboard or wait to hear from the recruiter --
+never guess or make one up.
+
+For general job-search, interview-prep, resume, or career questions that
+don't depend on this candidate's specific data (e.g. "how do I answer a
+behavioral question", "what should I wear to an interview"), answer helpfully
+using normal good-practice knowledge.
+
+CANDIDATE'S QUESTION: {question}
+
+Answer in plain, warm, encouraging language -- 2-5 sentences, referencing
+their specific applications/status from the data when relevant.
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "answer": "your answer here"
+}}
+"""
+    result = _generate_json(prompt, temperature=0.4, max_tokens=1000)
+    if "error" in result:
+        return {"error": result["error"]}
+    return result.get("answer", "")
+
+
 def check_job_description_quality(title: str, description: str, required_skills: str, location: str, job_type: str):
     """Reviews a job posting before it goes live: checks the title,
     description, and required skills together for completeness AND
@@ -819,6 +863,51 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
     return None if "error" in result else result
 
 
+def evaluate_interview_answers(job_title: str, job_description: str, qa_pairs: list):
+    """Module 4 (Interview Fix) -- auto-generates a first-pass interview
+    feedback record FROM the candidate's own submitted written answers.
+    This is a starting point for the recruiter, not a final decision --
+    they review and can edit every field (including the recommendation)
+    before sharing anything with the candidate."""
+    if not client:
+        return None
+
+    qa_text = "\n\n".join(
+        f"Q ({qa.get('category', 'general')}): {qa.get('question_text', '')}\nA: {qa.get('candidate_answer') or '(no answer given)'}"
+        for qa in qa_pairs
+    )
+
+    prompt = f"""You are helping a recruiter get a first-pass read on a
+candidate's written interview answers, for role: {job_title}.
+
+JOB DESCRIPTION: {job_description}
+
+QUESTIONS AND THE CANDIDATE'S OWN WRITTEN ANSWERS:
+\"\"\"
+{qa_text[:6000]}
+\"\"\"
+
+Rate the candidate 1-5 (5 = excellent) on each dimension, based ONLY on
+what's actually in their answers above -- an unanswered or very thin
+question should pull that dimension's score down, not be ignored.
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "technical_competency": 1-5,
+  "communication": 1-5,
+  "problem_solving": 1-5,
+  "job_knowledge": 1-5,
+  "overall_feedback": "3-5 sentence summary of how they did, referencing specific answers",
+  "recommendation": "Move Forward" | "Hold" | "Reject"
+}}
+
+This is a first-pass AI read for the recruiter to review and edit --
+not a final decision.
+"""
+    result = _generate_json(prompt, temperature=0.3, max_tokens=800)
+    return None if "error" in result else result
+
+
 def summarize_interview_feedback(feedback: dict):
     """Summarizes a recruiter's own interview feedback into a short
     narrative. This NEVER produces a hire/reject decision -- it only
@@ -892,6 +981,46 @@ Return ONLY valid JSON in exactly this shape, no extra commentary:
 {{
   "result": "verified" or "inconsistent" or "needs_review" or "unable_to_verify",
   "notes": "1-2 sentences citing the specific facts compared and why this result was chosen"
+}}
+"""
+    result = _generate_json(prompt, temperature=0.1, max_tokens=500)
+    return None if "error" in result else result
+# ---------------------------------------------------------------------------
+# Module 10 (expanded) -- cross-document consistency + fraud-signal framing
+# ---------------------------------------------------------------------------
+
+def cross_check_documents(candidate_documents: list):
+    """Compares a candidate's OWN uploaded documents against EACH OTHER --
+    not just against their self-declared profile text. Catches things like
+    a name or date that doesn't match between a degree certificate and a
+    government ID, which a single-document check can't see. Still not an
+    authoritative background check -- only ever flags for human review."""
+    if not client or len(candidate_documents) < 2:
+        return None
+
+    doc_summaries = [
+        {"document_type": d["document_type"], "extracted_text": (d["extracted_text"] or "")[:2000]}
+        for d in candidate_documents
+    ]
+
+    prompt = f"""You are checking whether a candidate's OWN uploaded documents
+are consistent with EACH OTHER -- not with anything external. This is a
+self-consistency check only, never an authoritative verification.
+
+DOCUMENTS THIS CANDIDATE UPLOADED:
+{json.dumps(doc_summaries)}
+
+Compare names, dates, and any other checkable facts that appear across more
+than one document. Flag anything that looks inconsistent (e.g. a different
+spelling of the candidate's name, overlapping/contradictory employment
+dates, a graduation date that postdates a claimed job that requires that
+degree). Do not flag minor formatting differences (e.g. "Jan 2020" vs
+"01/2020") as inconsistencies.
+
+Return ONLY valid JSON in exactly this shape, no extra commentary:
+{{
+  "consistent": true or false,
+  "notes": "1-3 sentences describing what was compared and any inconsistency found, or confirming consistency"
 }}
 """
     result = _generate_json(prompt, temperature=0.1, max_tokens=500)

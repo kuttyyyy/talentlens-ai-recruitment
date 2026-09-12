@@ -1,9 +1,4 @@
 // AdminPortalShell.jsx
-// A layout wrapper used ONLY by Admin Portal pages -- deliberately
-// separate from the public site's AppShell.jsx, with its own nav and its
-// own session (adminPortalToken / adminPortalUser), so an admin session
-// never overlaps with a recruiter/candidate session in the same browser.
-
 import { useEffect } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { getAdminUser, clearAdminSession, adminApiRequest } from "../api/adminClient";
@@ -12,6 +7,7 @@ const NAV_ITEMS = [
   { label: "Dashboard", path: "/admin-portal/dashboard" },
   { label: "Companies", path: "/admin-portal/companies" },
   { label: "Recruiters & Permissions", path: "/admin-portal/recruiters" },
+  { label: "Recruiter Feedback", path: "/admin-portal/feedback" },
   { label: "Audit Log", path: "/admin-portal/audit-log" },
 ];
 
@@ -21,8 +17,6 @@ function AdminPortalShell({ children }) {
   const admin = getAdminUser();
 
   useEffect(() => {
-    // Confirm the stored token is still valid on every page load -- if the
-    // account was suspended or the token expired, this kicks them back to login.
     adminApiRequest("/admin-portal/me").catch(() => {});
   }, []);
 
@@ -70,3 +64,4 @@ function AdminPortalShell({ children }) {
 }
 
 export default AdminPortalShell;
+  
