@@ -1,11 +1,12 @@
 # main.py
 # This is the entry point of our backend server.
 
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
-from app.database import engine, Base
-from app import models
+from app.database import engine, Base, SessionLocal
+from app import models, auth
 from app.routers import (
     auth_routes,
     candidate_routes,
@@ -140,3 +141,49 @@ app.include_router(admin_portal_routes.router)
 @app.get("/")
 def read_root():
     return {"message": "AI Recruitment System backend is running!"}
+
+
+# ==========================================================
+# TEMPORARY -- DATABASE RESET (for hosts without Shell access,
+# e.g. Render's free plan). Protected by a secret so a random
+# visitor can't trigger it -- set RESET_SECRET as an environment
+# variable on your host, then visit this URL once with that
+# secret to wipe and recreate the database plus a fresh admin.
+#
+# REMOVE THIS ENDPOINT (and the RESET_SECRET env var) once you've
+# used it -- a destructive, always-available reset route is not
+# something to leave running in production long-term.
+# ==========================================================
+@app.get("/system/reset-database")
+def reset_database_and_seed_admin(
+    secret: str,
+    admin_email: str = "admin@talentlens.com",
+    admin_password: str = "changeme123",
+    admin_full_name: str = "Super Admin",
+):
+    expected_secret = os.getenv("RESET_SECRET")
+    if not expected_secret or secret != expected_secret:
+        raise HTTPException(status_code=403, detail="Invalid or missing secret")
+
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    db = SessionLocal()
+    try:
+        admin = models.User(
+            full_name=admin_full_name,
+            email=admin_email,
+            password_hash=auth.hash_password(admin_password),
+            role="admin",
+            admin_level="super_admin",
+        )
+        db.add(admin)
+        db.commit()
+    finally:
+        db.close()
+
+    return {
+        "message": "Database wiped and recreated. Admin account created.",
+        "admin_email": admin_email,
+        "admin_password": admin_password,
+    }
