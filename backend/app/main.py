@@ -209,3 +209,67 @@ def set_user_password(secret: str, email: str, new_password: str):
         return {"message": f"Password updated for {email}"}
     finally:
         db.close()
+
+
+@app.get("/system/delete-all-candidates")
+def delete_all_candidates(secret: str):
+    """TEMPORARY: deletes every CANDIDATE account and everything tied to
+    them (applications, test attempts + uploaded files, verification
+    documents, interview questions/feedback, email logs) -- while leaving
+    every recruiter, job, and admin account completely untouched.
+
+    Deletes in dependency order (children before parents) since the
+    schema doesn't have DB-level cascade deletes configured."""
+    expected_secret = os.getenv("RESET_SECRET")
+    if not expected_secret or secret != expected_secret:
+        raise HTTPException(status_code=403, detail="Invalid or missing secret")
+
+    db = SessionLocal()
+    try:
+        candidate_ids = [
+            row[0] for row in db.query(models.User.id).filter(models.User.role == "candidate").all()
+        ]
+        if not candidate_ids:
+            return {"message": "No candidates found -- nothing to delete"}
+
+        application_ids = [
+            row[0]
+            for row in db.query(models.Application.id)
+            .filter(models.Application.candidate_id.in_(candidate_ids))
+            .all()
+        ]
+        attempt_ids = [
+            row[0]
+            for row in db.query(models.TestAttempt.id)
+            .filter(models.TestAttempt.application_id.in_(application_ids))
+            .all()
+        ]
+
+        # Children first, all the way up to the User rows themselves.
+        db.query(models.TestAttemptFile).filter(models.TestAttemptFile.attempt_id.in_(attempt_ids)).delete(synchronize_session=False)
+        db.query(models.TestAttempt).filter(models.TestAttempt.application_id.in_(application_ids)).delete(synchronize_session=False)
+        db.query(models.InterviewQuestion).filter(models.InterviewQuestion.application_id.in_(application_ids)).delete(synchronize_session=False)
+        db.query(models.InterviewFeedback).filter(models.InterviewFeedback.application_id.in_(application_ids)).delete(synchronize_session=False)
+        db.query(models.EmailLog).filter(models.EmailLog.application_id.in_(application_ids)).delete(synchronize_session=False)
+        db.query(models.VerificationDocument).filter(models.VerificationDocument.candidate_id.in_(candidate_ids)).delete(synchronize_session=False)
+        # Nothing else can reference these candidates once every candidate
+        # is being deleted together -- but just in case any audit log entry
+        # was ever written with a candidate as the actor, null it out
+        # rather than let it block the delete.
+        db.query(models.AuditLog).filter(models.AuditLog.actor_id.in_(candidate_ids)).update(
+            {models.AuditLog.actor_id: None}, synchronize_session=False
+        )
+        db.query(models.Application).filter(models.Application.candidate_id.in_(candidate_ids)).delete(synchronize_session=False)
+        db.query(models.CandidateProfile).filter(models.CandidateProfile.user_id.in_(candidate_ids)).delete(synchronize_session=False)
+        db.query(models.User).filter(models.User.id.in_(candidate_ids)).delete(synchronize_session=False)
+
+        db.commit()
+        return {
+            "message": f"Deleted {len(candidate_ids)} candidate account(s) and all related data.",
+            "recruiters_and_jobs": "untouched",
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Delete failed, nothing was changed: {e}")
+    finally:
+        db.close()
