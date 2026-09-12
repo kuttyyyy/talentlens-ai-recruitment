@@ -52,6 +52,25 @@ def get_me(admin: models.User = Depends(get_current_admin)):
     return _user_out(admin)
 
 
+@router.post("/change-password")
+def change_password(
+    body: schemas.ChangePasswordRequest,
+    admin: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Lets a logged-in admin change their own password, by proving they
+    know the current one first."""
+    if not auth.verify_password(body.current_password, admin.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+
+    admin.password_hash = auth.hash_password(body.new_password)
+    db.commit()
+    log_action(db, actor_id=admin.id, action="admin_changed_own_password", target_type="user", target_id=admin.id)
+    return {"message": "Password changed successfully"}
+
+
 @router.get("/super/stats")
 def get_platform_stats(admin: models.User = Depends(require_super_admin), db: Session = Depends(get_db)):
     total_companies = db.query(models.Company).count()

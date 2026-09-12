@@ -187,3 +187,25 @@ def reset_database_and_seed_admin(
         "admin_email": admin_email,
         "admin_password": admin_password,
     }
+
+
+@app.get("/system/set-password")
+def set_user_password(secret: str, email: str, new_password: str):
+    """TEMPORARY, non-destructive helper: updates ONE user's password by
+    email, without touching anything else in the database. Protected by
+    the same RESET_SECRET. Remove this endpoint once the admin portal has
+    its own proper change-password feature."""
+    expected_secret = os.getenv("RESET_SECRET")
+    if not expected_secret or secret != expected_secret:
+        raise HTTPException(status_code=403, detail="Invalid or missing secret")
+
+    db = SessionLocal()
+    try:
+        user = db.query(models.User).filter(models.User.email == email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail=f"No user found with email {email}")
+        user.password_hash = auth.hash_password(new_password)
+        db.commit()
+        return {"message": f"Password updated for {email}"}
+    finally:
+        db.close()

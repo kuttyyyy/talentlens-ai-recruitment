@@ -220,6 +220,11 @@ class AdminLoginRequest(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class CompanyCreate(BaseModel):
     name: str
 
