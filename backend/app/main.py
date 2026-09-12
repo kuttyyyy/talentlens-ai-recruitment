@@ -252,10 +252,6 @@ def delete_all_candidates(secret: str):
         db.query(models.InterviewFeedback).filter(models.InterviewFeedback.application_id.in_(application_ids)).delete(synchronize_session=False)
         db.query(models.EmailLog).filter(models.EmailLog.application_id.in_(application_ids)).delete(synchronize_session=False)
         db.query(models.VerificationDocument).filter(models.VerificationDocument.candidate_id.in_(candidate_ids)).delete(synchronize_session=False)
-        # Nothing else can reference these candidates once every candidate
-        # is being deleted together -- but just in case any audit log entry
-        # was ever written with a candidate as the actor, null it out
-        # rather than let it block the delete.
         db.query(models.AuditLog).filter(models.AuditLog.actor_id.in_(candidate_ids)).update(
             {models.AuditLog.actor_id: None}, synchronize_session=False
         )
