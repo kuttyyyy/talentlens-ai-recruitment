@@ -570,7 +570,7 @@ function TakeTest() {
           {questions[currentIndex] && (
             <div>
               <p className="text-text text-base mb-4">
-                {questions[currentIndex].question || questions[currentIndex].scenario}
+                {questions[currentIndex].scenario || questions[currentIndex].question}
               </p>
               {questions[currentIndex].scenario && questions[currentIndex].question && (
                 <p className="text-text text-sm font-medium mb-4">{questions[currentIndex].question}</p>
