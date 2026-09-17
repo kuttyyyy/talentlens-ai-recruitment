@@ -572,9 +572,6 @@ function TakeTest() {
               <p className="text-text text-base mb-4">
                 {questions[currentIndex].scenario || questions[currentIndex].question}
               </p>
-              {questions[currentIndex].scenario && questions[currentIndex].question && (
-                <p className="text-text text-sm font-medium mb-4">{questions[currentIndex].question}</p>
-              )}
 
               {Array.isArray(questions[currentIndex].options) ? (
                 <div className="flex flex-col gap-2">
